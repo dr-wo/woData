@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wodata"
+version = "0.1.0"
+description = "Shared data root and cache path helpers for dr-wo projects."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+  { email = "zhxutong517@gmail.com" }
+]
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wodata"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

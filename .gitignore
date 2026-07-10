@@ -1,0 +1,29 @@
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local editor and OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Runtime data/cache payloads. Keep this repo focused on the wodata package;
+# generated datasets should be reproducible and not committed by default.
+wostrategy/
