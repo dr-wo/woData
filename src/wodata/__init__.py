@@ -3,7 +3,33 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__all__ = ["get_cache_path", "get_data_root"]
+from wodata.colours import (
+    DRIVER_COLORS,
+    DRIVER_COLOURS,
+    DRIVER_TEAMS,
+    F1_TEAM_COLORS,
+    TEAM_COLORS,
+    TEAM_COLOURS,
+    get_driver_color,
+    get_driver_colour,
+    get_team_color,
+    get_team_colour,
+)
+
+__all__ = [
+    "DRIVER_COLORS",
+    "DRIVER_COLOURS",
+    "DRIVER_TEAMS",
+    "F1_TEAM_COLORS",
+    "TEAM_COLORS",
+    "TEAM_COLOURS",
+    "get_cache_path",
+    "get_data_root",
+    "get_driver_color",
+    "get_driver_colour",
+    "get_team_color",
+    "get_team_colour",
+]
 
 
 def get_data_root(explicit_root: str | Path | None = None) -> Path:
