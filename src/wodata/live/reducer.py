@@ -33,6 +33,19 @@ def _as_int(value: object) -> int | None:
     return parsed
 
 
+def _as_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes"}:
+        return True
+    if normalized in {"false", "0", "no"}:
+        return False
+    return None
+
+
 def _lap_time_seconds(value: object) -> float | None:
     if isinstance(value, Mapping):
         value = value.get("Value")
@@ -53,16 +66,25 @@ def _lap_time_seconds(value: object) -> float | None:
     return seconds if math.isfinite(seconds) and seconds > 0 else None
 
 
-def _sector_times_seconds(value: object) -> tuple[float, float, float] | None:
-    if not isinstance(value, list) or len(value) < 3:
-        return None
-    sector_times = []
-    for sector in value[:3]:
+def _sector_time_updates(value: object) -> dict[int, float]:
+    if isinstance(value, list):
+        items = enumerate(value[:3])
+    elif isinstance(value, Mapping):
+        items = value.items()
+    else:
+        return {}
+    sector_times = {}
+    for index, sector in items:
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            continue
+        if index not in (0, 1, 2):
+            continue
         sector_time = _lap_time_seconds(sector)
-        if sector_time is None:
-            return None
-        sector_times.append(sector_time)
-    return tuple(sector_times)
+        if sector_time is not None:
+            sector_times[index] = sector_time
+    return sector_times
 
 
 def _is_older(candidate: datetime | None, current: datetime | None) -> bool:
@@ -78,6 +100,7 @@ class LiveSessionStore:
         self._session_status: str | None = None
         self._drivers: dict[str, dict] = {}
         self._timing: dict[str, dict] = {}
+        self._tyre_stints: dict[str, dict[int, dict]] = {}
         self._positions: dict[str, int] = {}
         self._laps: dict[str, dict[int, dict]] = {}
         self._pending: dict[str, dict] = {}
@@ -110,6 +133,8 @@ class LiveSessionStore:
             self._apply_driver_list(payload, message.source_timestamp_utc)
         elif message.topic == "TimingData" and isinstance(payload, Mapping):
             self._apply_timing_data(payload, message.source_timestamp_utc)
+        elif message.topic == "TimingAppData" and isinstance(payload, Mapping):
+            self._apply_timing_app_data(payload, message.source_timestamp_utc)
 
     def _apply_driver_list(self, payload: Mapping, timestamp: datetime | None) -> None:
         lines = payload.get("Lines", payload)
@@ -137,6 +162,57 @@ class LiveSessionStore:
                 self._positions[number] = position
             self._update_pending_lap(number, patch, timestamp)
 
+    def _apply_timing_app_data(self, payload: Mapping, timestamp: datetime | None) -> None:
+        lines = payload.get("Lines", payload)
+        if not isinstance(lines, Mapping):
+            return
+        for number, driver_patch in lines.items():
+            if not isinstance(driver_patch, Mapping):
+                continue
+            updates = driver_patch.get("Stints")
+            if isinstance(updates, list):
+                updates = {str(index): value for index, value in enumerate(updates)}
+            if not isinstance(updates, Mapping):
+                continue
+            number = str(number)
+            driver_stints = self._tyre_stints.setdefault(number, {})
+            for stint_index, patch in updates.items():
+                if not isinstance(patch, Mapping):
+                    continue
+                parsed_index = _as_int(stint_index)
+                if parsed_index is None or parsed_index < 0:
+                    continue
+                if parsed_index not in driver_stints:
+                    completed_lap = max(self._laps.get(number, {}), default=0)
+                    driver_stints[parsed_index] = {
+                        "fitted_lap": completed_lap + 1,
+                        "timestamp": timestamp,
+                    }
+                _deep_merge(driver_stints[parsed_index], patch)
+
+    def _tyre_assignment(self, number: str, lap: int) -> dict[str, object]:
+        candidates = [
+            (index, stint)
+            for index, stint in self._tyre_stints.get(number, {}).items()
+            if int(stint.get("fitted_lap", 1)) <= lap
+        ]
+        if not candidates:
+            return {"compound": None, "tyre_life": None, "stint": None, "fresh_tyre": None}
+        stint_index, data = max(candidates, key=lambda item: item[0])
+        start_laps = _as_int(data.get("StartLaps")) or 0
+        stint_number = stint_index + 1
+        completed_on_stint = sum(
+            1
+            for completed in self._laps.get(number, {}).values()
+            if completed.get("stint") == stint_number
+        )
+        return {
+            "compound": str(data["Compound"]).upper() if data.get("Compound") else None,
+            "tyre_life": float(start_laps + completed_on_stint + 1),
+            "stint": stint_number,
+            "fresh_tyre": _as_bool(data.get("New")),
+        }
+
     def _update_pending_lap(
         self, number: str, patch: Mapping, timestamp: datetime | None
     ) -> None:
@@ -150,6 +226,7 @@ class LiveSessionStore:
                 "time_seq": 0,
                 "time_timestamp": None,
                 "sectors": None,
+                "sector_values": [None, None, None],
                 "sectors_seq": 0,
                 "sectors_timestamp": None,
                 "committed_seq": 0,
@@ -166,10 +243,12 @@ class LiveSessionStore:
             else:
                 pending.update(time=lap_time, time_seq=self._sequence, time_timestamp=timestamp)
         if "Sectors" in patch and not _is_older(timestamp, pending["sectors_timestamp"]):
-            sector_times = _sector_times_seconds(patch.get("Sectors"))
-            if sector_times is not None:
+            sector_updates = _sector_time_updates(patch.get("Sectors"))
+            for index, sector_time in sector_updates.items():
+                pending["sector_values"][index] = sector_time
+            if all(value is not None for value in pending["sector_values"]):
                 pending.update(
-                    sectors=sector_times,
+                    sectors=tuple(pending["sector_values"]),
                     sectors_seq=self._sequence,
                     sectors_timestamp=timestamp,
                 )
@@ -212,11 +291,14 @@ class LiveSessionStore:
                 (value for value in (pending["lap_timestamp"], pending["time_timestamp"]) if value),
                 default=None,
             ),
+            **self._tyre_assignment(number, lap),
         }
         self._recompute_cumulative(number, lap)
         pending["committed_seq"] = self._sequence
         pending["lap_seq"] = 0
         pending["time_seq"] = 0
+        pending["sectors"] = None
+        pending["sector_values"] = [None, None, None]
         pending["sectors_seq"] = 0
 
     def _recompute_cumulative(self, number: str, start_lap: int) -> None:
@@ -280,6 +362,10 @@ class LiveSessionStore:
                         data["cumulative_time_s"],
                         data["position"],
                         data["source_timestamp_utc"],
+                        data.get("compound"),
+                        data.get("tyre_life"),
+                        data.get("stint"),
+                        data.get("fresh_tyre"),
                     )
                 )
                 sector_times = data.get("sector_times_s")
@@ -307,6 +393,10 @@ class LiveSessionStore:
                             cumulative_time,
                             data["position"],
                             data["source_timestamp_utc"],
+                            data.get("compound"),
+                            data.get("tyre_life"),
+                            data.get("stint"),
+                            data.get("fresh_tyre"),
                         )
                     )
         completed_laps.sort(key=lambda item: (item.lap_number, item.driver_number))

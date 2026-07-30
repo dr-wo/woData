@@ -14,3 +14,7 @@ class LiveTimingSource(Protocol):
     ) -> None: ...
 
     def stop(self) -> None: ...
+
+
+# General name for source-agnostic consumers. The old public name remains compatible.
+LiveMessageSource = LiveTimingSource

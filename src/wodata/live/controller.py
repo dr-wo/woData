@@ -9,9 +9,9 @@ from pathlib import Path
 
 from .fastf1_source import FastF1LiveTimingSource
 from .models import LiveConnectionStatus, LiveSessionSnapshot, LiveTimingMessage
-from .recorder import LiveTimingRecorder, live_recording_path
+from .recorder import LiveTimingRecorder, live_recording_path, unused_recording_path
 from .reducer import LiveSessionStore
-from .replay import ReplayLiveTimingSource
+from .replay import ReplayFaultConfig, ReplayLiveTimingSource
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,9 @@ class LiveConfig:
 class ReplayConfig:
     path: Path
     speed: float = 0.0
+    start_time_seconds: float | None = None
+    end_time_seconds: float | None = None
+    fault_config: ReplayFaultConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -51,12 +54,15 @@ class LiveTimingController:
         self.message_counts: Counter[str] = Counter()
 
     def start_live(self, config: LiveConfig) -> None:
+        if self.is_running:
+            raise RuntimeError("A live timing source is already running")
         path = live_recording_path(
             year=config.year,
             round_number=config.round_number,
             session=config.session,
             data_root=config.data_root,
         )
+        path = unused_recording_path(path)
         self._recorder = LiveTimingRecorder(path)
         self.logger.info("Recording live timing to %s", path)
         self._start_source(
@@ -66,13 +72,40 @@ class LiveTimingController:
         )
 
     def start_replay(self, config: ReplayConfig) -> None:
-        self._start_source(ReplayLiveTimingSource(config.path, speed=config.speed, logger=self.logger))
+        if self.is_running:
+            raise RuntimeError("A live timing source is already running")
+        # Archive replay is read-only and must never append to a recorder left
+        # over from an earlier live run on this controller.
+        self._recorder = None
+        self._start_source(
+            ReplayLiveTimingSource(
+                config.path,
+                speed=config.speed,
+                logger=self.logger,
+                start_time_seconds=config.start_time_seconds,
+                end_time_seconds=config.end_time_seconds,
+                fault_config=config.fault_config,
+            )
+        )
+
+    def pause_replay(self) -> None:
+        if not isinstance(self._source, ReplayLiveTimingSource):
+            raise RuntimeError("The active source is not a replay")
+        self._source.pause()
+
+    def resume_replay(self) -> None:
+        if not isinstance(self._source, ReplayLiveTimingSource):
+            raise RuntimeError("The active source is not a replay")
+        self._source.resume()
 
     def _start_source(self, source) -> None:
         if self.is_running:
             raise RuntimeError("A live timing source is already running")
         self.store.reset()
         self._snapshot = self.store.snapshot()
+        self._messages = queue.Queue()
+        self._statuses = queue.Queue()
+        self.message_counts.clear()
         self._source = source
         self._thread = threading.Thread(target=self._run_source, daemon=True, name="wodata-live")
         self._thread.start()
@@ -127,3 +160,7 @@ class LiveTimingController:
     @property
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def recording_path(self) -> Path | None:
+        return self._recorder.path if self._recorder is not None else None

@@ -12,6 +12,15 @@ class LiveTimingMessage:
     payload: object
     source_timestamp_utc: datetime | None
     received_at_utc: datetime
+    schema_version: int = 1
+    source: Literal["signalr_live", "f1_archive_replay", "synthetic_test"] = "signalr_live"
+    sequence: int = 0
+    session_time_seconds: float | None = None
+
+
+# Source-neutral name used by new integrations; retain LiveTimingMessage for
+# existing woPlanner and recording callers.
+LiveMessage = LiveTimingMessage
 
 
 @dataclass(frozen=True)
@@ -34,6 +43,10 @@ class CompletedLap:
     cumulative_time_s: float | None
     position: int | None
     source_timestamp_utc: datetime | None
+    compound: str | None = None
+    tyre_life: float | None = None
+    stint: int | None = None
+    fresh_tyre: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +61,10 @@ class CompletedSector:
     cumulative_time_s: float | None
     position: int | None
     source_timestamp_utc: datetime | None
+    compound: str | None = None
+    tyre_life: float | None = None
+    stint: int | None = None
+    fresh_tyre: bool | None = None
 
 
 @dataclass(frozen=True)

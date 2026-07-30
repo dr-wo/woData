@@ -31,16 +31,20 @@ class FastF1LiveTimingSource:
             ) from exc
 
         received = False
+        sequence = 0
 
         def on_message(record) -> None:
-            nonlocal received
+            nonlocal received, sequence
             topic, payload, source_timestamp = record
+            sequence += 1
             emit_message(
                 LiveTimingMessage(
                     str(topic),
                     payload,
                     parse_timestamp(source_timestamp),
                     datetime.now(timezone.utc),
+                    source="signalr_live",
+                    sequence=sequence,
                 )
             )
             if not received:

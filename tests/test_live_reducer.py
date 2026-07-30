@@ -85,3 +85,76 @@ def test_completed_sectors_are_extracted_when_available():
         ("S2", 2, 61.0),
         ("S3", 3, 90.0),
     ]
+
+
+def test_sparse_archive_sector_updates_are_accumulated_for_completed_lap():
+    store = LiveSessionStore()
+    store.apply(message({"1": {"Tla": "AAA", "TeamName": "Mercedes"}}, topic="DriverList"))
+    store.apply(message({"Lines": {"1": {"Sectors": {"0": {"Value": "30.000"}}}}}))
+    store.apply(message({"Lines": {"1": {"Sectors": {"1": {"Value": "31.000"}}}}}))
+    store.apply(message({"Lines": {"1": {"Sectors": {"2": {"Value": "29.000"}}}}}))
+    snapshot = store.apply(
+        message(
+            {
+                "Lines": {
+                    "1": {
+                        "NumberOfLaps": 1,
+                        "LastLapTime": {"Value": "1:30.000"},
+                    }
+                }
+            }
+        )
+    )
+
+    assert [sector.sector_time_s for sector in snapshot.completed_sectors] == [30.0, 31.0, 29.0]
+
+
+def test_timing_app_stints_assign_compound_and_tyre_life_to_laps():
+    store = LiveSessionStore()
+    store.apply(message({"1": {"Tla": "AAA", "TeamName": "Mercedes"}}, topic="DriverList"))
+    store.apply(
+        message(
+            {
+                "Lines": {
+                    "1": {
+                        "Stints": {
+                            "0": {"Compound": "MEDIUM", "New": "false", "StartLaps": 3}
+                        }
+                    }
+                }
+            },
+            topic="TimingAppData",
+        )
+    )
+    store.apply(
+        message(
+            {"Lines": {"1": {"NumberOfLaps": 1, "LastLapTime": {"Value": "1:30"}}}}
+        )
+    )
+    store.apply(
+        message(
+            {
+                "Lines": {
+                    "1": {
+                        "Stints": {
+                            "1": {"Compound": "HARD", "New": "true", "StartLaps": 0}
+                        }
+                    }
+                }
+            },
+            topic="TimingAppData",
+        )
+    )
+    snapshot = store.apply(
+        message(
+            {"Lines": {"1": {"NumberOfLaps": 2, "LastLapTime": {"Value": "1:31"}}}}
+        )
+    )
+
+    first, second = snapshot.completed_laps
+    assert (first.compound, first.tyre_life, first.stint, first.fresh_tyre) == (
+        "MEDIUM", 4.0, 1, False
+    )
+    assert (second.compound, second.tyre_life, second.stint, second.fresh_tyre) == (
+        "HARD", 1.0, 2, True
+    )
