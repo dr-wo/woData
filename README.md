@@ -24,3 +24,24 @@ When a new season changes teams, drivers, or colours, update
 `src/wodata/colours.py` from a complete FastF1 `DriverList` and update
 `tests/test_colours.py`. Consumer packages should import the shared mappings
 instead of defining local palettes.
+
+## Live timing
+
+The optional `wodata.live` package provides authenticated FastF1 live ingestion,
+mandatory raw recording, deterministic replay, completed-lap state reduction, and
+sector-level timing when the live feed includes `TimingData.Lines[*].Sectors`.
+
+```bash
+pip install -e ../Fast-F1
+pip install -e ".[live]"
+```
+
+Recordings use the shared data root under
+`wodata/live_timing/schema_v1/year=.../round=.../session=...`.
+
+`LiveTimingController.start_live()` records every canonical raw message to
+`live_timing_raw.txt` before reduction. The same file can be passed to
+`ReplayLiveTimingSource` for deterministic debugging. If a recording starts late
+or the feed omits a lap/sector time, the reducer keeps the data it has and marks
+later cumulative timing unknown after internal gaps instead of fabricating a
+continuous race clock.

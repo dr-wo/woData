@@ -7,12 +7,15 @@ name = "wodata"
 version = "0.1.0"
 description = "Shared data root and cache path helpers for dr-wo projects."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
   { email = "zhxutong517@gmail.com" }
 ]
 dependencies = []
+
+[project.optional-dependencies]
+live = ["fastf1>=3.8,<4"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wodata"]
