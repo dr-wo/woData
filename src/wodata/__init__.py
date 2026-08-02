@@ -25,6 +25,12 @@ __all__ = [
     "TEAM_COLOURS",
     "get_cache_path",
     "get_data_root",
+    "get_fastf1_raw_cache_dir",
+    "get_fastf1_session_laps_path",
+    "get_fastf1_telemetry_cache_dir",
+    "get_race_performance_review_event_dir",
+    "get_race_performance_review_range_dir",
+    "get_race_performance_review_root",
     "get_driver_color",
     "get_driver_colour",
     "get_team_color",
@@ -45,7 +51,11 @@ def get_data_root(explicit_root: str | Path | None = None) -> Path:
     if legacy_root:
         return Path(legacy_root).expanduser()
 
-    return Path.cwd() / "woData"
+    cwd = Path.cwd()
+    sibling = cwd.parent / "woData"
+    if cwd.name in {"woStrategy", "woPlanner"} and sibling.is_dir():
+        return sibling
+    return cwd / "woData"
 
 
 def get_cache_path(
@@ -68,4 +78,76 @@ def get_cache_path(
         / f"round={round_number}"
         / f"session={session}"
         / filename
+    )
+
+
+def get_fastf1_raw_cache_dir(data_root: str | Path | None = None) -> Path:
+    """Directory used by FastF1's own HTTP/parser cache."""
+    return get_data_root(data_root) / "fastf1" / "raw_cache" / "schema_v1"
+
+
+def get_fastf1_telemetry_cache_dir(data_root: str | Path | None = None) -> Path:
+    """Directory for woStrategy's derived per-sample telemetry cache."""
+    return get_data_root(data_root) / "fastf1" / "telemetry" / "schema_v1"
+
+
+def get_fastf1_session_laps_path(
+    *,
+    year: int,
+    round_number: int,
+    session: str,
+    data_root: str | Path | None = None,
+) -> Path:
+    """Canonical cache path for FastF1 session laps enriched for analysis."""
+    return get_cache_path(
+        namespace="fastf1",
+        dataset="session_laps",
+        schema="schema_v1",
+        year=year,
+        round_number=round_number,
+        session=str(session).upper(),
+        filename="laps.pkl",
+        data_root=Path(data_root) if data_root is not None else None,
+    )
+
+
+def get_race_performance_review_root(
+    data_root: str | Path | None = None,
+) -> Path:
+    """Canonical root for woStrategy post-race performance artifacts."""
+    return (
+        get_data_root(data_root)
+        / "wostrategy"
+        / "race_performance_review"
+        / "schema_v1"
+    )
+
+
+def get_race_performance_review_event_dir(
+    *,
+    year: int,
+    round_number: int,
+    session: str,
+    data_root: str | Path | None = None,
+) -> Path:
+    return (
+        get_race_performance_review_root(data_root)
+        / f"year={int(year)}"
+        / f"round={int(round_number)}"
+        / f"session={str(session).upper()}"
+    )
+
+
+def get_race_performance_review_range_dir(
+    *,
+    year: int,
+    range_label: str,
+    session: str,
+    data_root: str | Path | None = None,
+) -> Path:
+    return (
+        get_race_performance_review_root(data_root)
+        / f"year={int(year)}"
+        / f"range={range_label}"
+        / f"session={str(session).upper()}"
     )

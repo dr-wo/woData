@@ -26,4 +26,7 @@ env/
 
 # Runtime data/cache payloads. Keep this repo focused on the wodata package;
 # generated datasets should be reproducible and not committed by default.
-wostrategy/
+/fastf1/
+/wodata/
+/woplanner/
+/wostrategy/

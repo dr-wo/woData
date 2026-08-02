@@ -47,6 +47,7 @@ class CompletedLap:
     tyre_life: float | None = None
     stint: int | None = None
     fresh_tyre: bool | None = None
+    session_time_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class CompletedSector:
     tyre_life: float | None = None
     stint: int | None = None
     fresh_tyre: bool | None = None
+    session_time_seconds: float | None = None
 
 
 @dataclass(frozen=True)

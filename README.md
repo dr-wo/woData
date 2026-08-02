@@ -104,3 +104,45 @@ Use `archive_replay` for completed sessions. `live_record` only receives data wh
 Formula 1 is actively broadcasting the configured session and requires F1TV
 authentication. The recorder opens its destination lazily on the first message and
 selects an unused filename rather than replacing a non-empty capture.
+
+## Strategy Prediction analysis contracts
+
+`wodata.contracts` defines the schema-v1 weekend-model, strategy-search, completed-lap,
+and tyre-state contracts shared by woStrategy and woPlanner. `wodata.artifacts` writes
+canonical model and strategy CSV/JSON artifacts below `WODATA_ROOT/wostrategy/`, with
+manifests, deterministic hashes, provenance, and append-only run history.
+
+FastF1 data used by Strategy Prediction is also rooted in woData: raw FastF1 HTTP/parser cache
+under `fastf1/raw_cache/schema_v1`, derived telemetry under `fastf1/telemetry/schema_v1`,
+and enriched session laps under `fastf1/session_laps/schema_v1`.
+
+## woStrategy cache layout
+
+woData is a runtime dependency of woStrategy and owns its shared cache paths.
+The default layout is:
+
+```text
+woData/
+  fastf1/
+    raw_cache/schema_v1/
+    telemetry/schema_v1/
+    session_laps/schema_v1/year=YYYY/round=N/session=FP1/laps.pkl
+  wostrategy/
+    race_performance_review/schema_v1/
+      year=YYYY/round=N/session=R/
+        tyre_information.csv
+        race_performance_YYYY_N_R_*.csv
+      year=YYYY/range=1-11/session=R/
+        tyre_information.csv
+        race_performance_*.csv
+```
+
+`tyre_information.csv` is the compact, canonical consumer view of tyre baseline
+speed, compound delta, and degradation. It includes global and team scopes.
+Detailed Monte Carlo samples, clean laps, diagnostics, and metadata deliberately
+remain as separate files in the same partition because they can be much larger.
+
+`WODATA_ROOT` may point to a different shared data root. `WOSTRATEGY_DATA_ROOT`
+is still accepted as a legacy environment override. With sibling checkouts and
+no override, running from woStrategy or woPlanner resolves the adjacent `woData`
+directory automatically.

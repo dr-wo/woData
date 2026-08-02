@@ -132,7 +132,11 @@ class LiveSessionStore:
         elif message.topic == "DriverList" and isinstance(payload, Mapping):
             self._apply_driver_list(payload, message.source_timestamp_utc)
         elif message.topic == "TimingData" and isinstance(payload, Mapping):
-            self._apply_timing_data(payload, message.source_timestamp_utc)
+            self._apply_timing_data(
+                payload,
+                message.source_timestamp_utc,
+                message.session_time_seconds,
+            )
         elif message.topic == "TimingAppData" and isinstance(payload, Mapping):
             self._apply_timing_app_data(payload, message.source_timestamp_utc)
 
@@ -147,7 +151,12 @@ class LiveSessionStore:
             _deep_merge(driver, patch)
             driver["_timestamp"] = timestamp
 
-    def _apply_timing_data(self, payload: Mapping, timestamp: datetime | None) -> None:
+    def _apply_timing_data(
+        self,
+        payload: Mapping,
+        timestamp: datetime | None,
+        session_time_seconds: float | None,
+    ) -> None:
         lines = payload.get("Lines", {})
         if not isinstance(lines, Mapping):
             return
@@ -160,7 +169,7 @@ class LiveSessionStore:
             position = _as_int(patch.get("Position"))
             if position is not None and position > 0:
                 self._positions[number] = position
-            self._update_pending_lap(number, patch, timestamp)
+            self._update_pending_lap(number, patch, timestamp, session_time_seconds)
 
     def _apply_timing_app_data(self, payload: Mapping, timestamp: datetime | None) -> None:
         lines = payload.get("Lines", payload)
@@ -214,7 +223,11 @@ class LiveSessionStore:
         }
 
     def _update_pending_lap(
-        self, number: str, patch: Mapping, timestamp: datetime | None
+        self,
+        number: str,
+        patch: Mapping,
+        timestamp: datetime | None,
+        session_time_seconds: float | None,
     ) -> None:
         pending = self._pending.setdefault(
             number,
@@ -229,6 +242,7 @@ class LiveSessionStore:
                 "sector_values": [None, None, None],
                 "sectors_seq": 0,
                 "sectors_timestamp": None,
+                "session_time_seconds": None,
                 "committed_seq": 0,
             },
         )
@@ -270,6 +284,7 @@ class LiveSessionStore:
                 if pending["sectors_seq"] > pending["committed_seq"]:
                     existing["sector_times_s"] = pending["sectors"]
                 existing["source_timestamp_utc"] = timestamp
+                existing["session_time_seconds"] = session_time_seconds
                 self.corrected_completed_lap_count += 1
                 self._recompute_cumulative(number, lap)
             pending["committed_seq"] = self._sequence
@@ -291,6 +306,7 @@ class LiveSessionStore:
                 (value for value in (pending["lap_timestamp"], pending["time_timestamp"]) if value),
                 default=None,
             ),
+            "session_time_seconds": session_time_seconds,
             **self._tyre_assignment(number, lap),
         }
         self._recompute_cumulative(number, lap)
@@ -366,6 +382,7 @@ class LiveSessionStore:
                         data.get("tyre_life"),
                         data.get("stint"),
                         data.get("fresh_tyre"),
+                        data.get("session_time_seconds"),
                     )
                 )
                 sector_times = data.get("sector_times_s")
@@ -397,6 +414,7 @@ class LiveSessionStore:
                             data.get("tyre_life"),
                             data.get("stint"),
                             data.get("fresh_tyre"),
+                            data.get("session_time_seconds"),
                         )
                     )
         completed_laps.sort(key=lambda item: (item.lap_number, item.driver_number))

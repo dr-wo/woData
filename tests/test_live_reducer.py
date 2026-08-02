@@ -8,8 +8,10 @@ from wodata.live import LiveSessionStore, LiveTimingMessage
 NOW = datetime(2026, 7, 25, tzinfo=timezone.utc)
 
 
-def message(payload, *, topic="TimingData"):
-    return LiveTimingMessage(topic, payload, NOW, NOW)
+def message(payload, *, topic="TimingData", session_time_seconds=None):
+    return LiveTimingMessage(
+        topic, payload, NOW, NOW, session_time_seconds=session_time_seconds
+    )
 
 
 def test_lap_time_then_count_count_then_time_duplicate_and_correction():
@@ -77,7 +79,8 @@ def test_completed_sectors_are_extracted_when_available():
                         ],
                     }
                 }
-            }
+            },
+            session_time_seconds=123.5,
         )
     )
     assert [(sector.sector, sector.segment_index, sector.cumulative_time_s) for sector in snapshot.completed_sectors] == [
@@ -85,6 +88,8 @@ def test_completed_sectors_are_extracted_when_available():
         ("S2", 2, 61.0),
         ("S3", 3, 90.0),
     ]
+    assert snapshot.completed_laps[0].session_time_seconds == 123.5
+    assert {sector.session_time_seconds for sector in snapshot.completed_sectors} == {123.5}
 
 
 def test_sparse_archive_sector_updates_are_accumulated_for_completed_lap():
