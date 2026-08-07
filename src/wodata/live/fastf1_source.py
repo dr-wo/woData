@@ -11,7 +11,11 @@ LIVE_PHASE_1_TOPICS = (
     "SessionInfo",
     "SessionStatus",
     "TimingData",
+    "TimingAppData",
+    "TrackStatus",
     "LapCount",
+    "CarData.z",
+    "Position.z",
 )
 
 

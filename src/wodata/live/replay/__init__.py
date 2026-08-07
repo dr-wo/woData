@@ -2,6 +2,7 @@ from .archive import (
     LARGE_TOPICS,
     OPTIONAL_TOPICS,
     REQUIRED_TOPICS,
+    TELEMETRY_TOPICS,
     ArchiveClient,
     ArchiveDownloadResult,
     ArchiveSession,

@@ -15,6 +15,7 @@ from .schema import ArchiveRecord, REPLAY_SCHEMA_VERSION, ReplayEvent
 DEFAULT_TOPIC_PRIORITY = (
     "SessionInfo", "DriverList", "SessionStatus", "TrackStatus", "LapCount",
     "TimingAppData", "TimingData", "RaceControlMessages", "WeatherData", "Heartbeat",
+    "CarData.z", "Position.z",
 )
 BUILDER_VERSION = "1.0"
 

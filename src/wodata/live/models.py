@@ -70,6 +70,25 @@ class CompletedSector:
 
 
 @dataclass(frozen=True)
+class LiveTelemetrySample:
+    driver_number: str
+    session_time_seconds: float
+    lap_number: int
+    speed_kph: float
+    source_timestamp_utc: datetime | None = None
+
+
+@dataclass(frozen=True)
+class LivePositionSample:
+    driver_number: str
+    session_time_seconds: float
+    x: float
+    y: float
+    z: float
+    on_track: bool | None = None
+
+
+@dataclass(frozen=True)
 class LiveConnectionStatus:
     state: Literal[
         "idle",
@@ -92,6 +111,8 @@ class LiveSessionSnapshot:
     latest_position_by_driver: Mapping[str, int]
     last_message_at_utc: datetime | None
     completed_sectors: tuple[CompletedSector, ...] = ()
+    telemetry_samples: tuple[LiveTelemetrySample, ...] = ()
+    position_samples: tuple[LivePositionSample, ...] = ()
 
     @classmethod
     def empty(cls) -> "LiveSessionSnapshot":

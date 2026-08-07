@@ -85,13 +85,13 @@ pause/resume/stop, topic exclusion, drop-after, delay, and seeded random
 drop/duplication. Faults are applied in memory; the source replay is never changed.
 
 For a dictionary-configured workflow like the `woStrategy` scripts, edit
-`SCRIPT_CONFIG` in `src/wodata/script/archive_replay.py` and run:
+`SCRIPT_CONFIG` in `src/wodata/script/fetch_replay_data.py` and run:
 
 ```bash
-PYTHONPATH=src ../.venv/bin/python -m wodata.script.archive_replay
+PYTHONPATH=src ../.venv/bin/python -m wodata.script.fetch_replay_data
 ```
 
-Set `workflow` to `"archive_replay"` and use the `download`, `build`, and `play`
+Set `workflow` to `"fetch_replay_data"` and use the `download`, `build`, and `play`
 switches in any combination. Normally only `year`, `round_number`, and `session`
 identify the session; `event` can remain `None` and is only a fallback when the
 round is unknown. Set `workflow` to `"live_record"` to record SignalR timing
@@ -100,7 +100,28 @@ placed under `WODATA_ROOT`, the legacy shared-root environment setting, or the
 `woData` project root. Archives go below
 `wodata/live_archive/` and live recordings below `wodata/live_timing/`.
 
-Use `archive_replay` for completed sessions. `live_record` only receives data while
+The fetch workflow includes FastF1's `CarData.z` and `Position.z` archive streams
+and can add them to an existing archive without downloading topics already present.
+Their decoded archive records are stored below the selected session archive as
+`raw/CarData.z.json` and `raw/Position.z.json`; the deterministic merged JSONL
+replay contains the same canonical messages. During reduction, `CarData.z` becomes
+timestamped speed samples with inferred lap attribution and is retained in a
+rolling 12-lap buffer per driver. `Position.z` becomes a separate XYZ diagnostic
+buffer. The shared traffic calculation consumes the speed buffer and does not wait
+for, merge, or repeatedly rebuild laps from the larger position stream.
+
+This separation is deliberate. `CarData.z` has the speed channel needed by the
+shared progress integrator, whereas raw XYZ positions require track projection and
+orientation calibration before they represent along-track distance. Keeping
+Position.z diagnostic avoids making replay speed and traffic availability depend
+on that unresolved calibration. Because `CarData.z` has no strategy lap number,
+the reducer assigns samples using the latest completed timing state and assumes
+messages are processed chronologically; delayed timing near a finish line can move
+a small number of samples to an adjacent lap. The bounded 12-lap buffer controls
+live memory and recalculation cost, at the cost of not retaining full-race
+telemetry in a live snapshot. Raw recordings and archive files remain complete.
+The old `archive_replay` workflow and module names remain compatibility aliases.
+Use `fetch_replay_data` for completed sessions. `live_record` only receives data while
 Formula 1 is actively broadcasting the configured session and requires F1TV
 authentication. The recorder opens its destination lazily on the first message and
 selects an unused filename rather than replacing a non-empty capture.

@@ -5,7 +5,13 @@ import json
 from pathlib import Path
 
 from ..reducer import LiveSessionStore
-from .archive import OPTIONAL_TOPICS, REQUIRED_TOPICS, download_archive, resolve_archive_session
+from .archive import (
+    OPTIONAL_TOPICS,
+    REQUIRED_TOPICS,
+    TELEMETRY_TOPICS,
+    download_archive,
+    resolve_archive_session,
+)
 from .builder import build_replay
 from .faults import ReplayFaultConfig
 from .player import ReplayPlayer
@@ -58,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         result = download_archive(
             session,
             output_root=args.output_root,
-            topics=args.topics or (*REQUIRED_TOPICS, *OPTIONAL_TOPICS),
+            topics=args.topics or (*REQUIRED_TOPICS, *OPTIONAL_TOPICS, *TELEMETRY_TOPICS),
             mandatory_topics=args.mandatory_topic,
             overwrite=args.overwrite,
         )

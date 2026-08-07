@@ -31,12 +31,22 @@ def session_time_seconds(value: object) -> float:
     else:
         text = str(value).strip().replace(",", ".")
         parts = text.split(":")
-        if not text or len(parts) > 3:
+        if not text or len(parts) > 4:
             raise ValueError(f"invalid session timestamp: {value!r}")
         try:
-            seconds = 0.0
-            for part in parts:
-                seconds = seconds * 60.0 + float(part)
+            if len(parts) == 4:
+                # FastF1 archive streams use HH:MM:SS:mmm.
+                hours, minutes, whole_seconds, milliseconds = parts
+                seconds = (
+                    float(hours) * 3600.0
+                    + float(minutes) * 60.0
+                    + float(whole_seconds)
+                    + float(milliseconds) / 1000.0
+                )
+            else:
+                seconds = 0.0
+                for part in parts:
+                    seconds = seconds * 60.0 + float(part)
         except ValueError as exc:
             raise ValueError(f"invalid session timestamp: {value!r}") from exc
     if seconds < 0 or seconds == float("inf") or seconds != seconds:

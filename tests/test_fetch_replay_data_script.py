@@ -4,7 +4,8 @@ import json
 
 import pytest
 
-from wodata.script.archive_replay import (
+from wodata.live.replay import TELEMETRY_TOPICS
+from wodata.script.fetch_replay_data import (
     SCRIPT_CONFIG,
     default_archive_output_root,
     run,
@@ -98,12 +99,18 @@ def test_download_resolves_session_by_round_without_event(monkeypatch, tmp_path)
         missing_topics = ()
         reused = False
 
-    monkeypatch.setattr("wodata.script.archive_replay.resolve_archive_session", fake_resolve)
+    monkeypatch.setattr("wodata.script.fetch_replay_data.resolve_archive_session", fake_resolve)
     monkeypatch.setattr(
-        "wodata.script.archive_replay.download_archive", lambda *args, **kwargs: Result()
+        "wodata.script.fetch_replay_data.download_archive", lambda *args, **kwargs: Result()
     )
 
     result = run(config)
 
     assert calls == [(2025, 14, "R")]
     assert result.downloaded is True
+
+
+def test_fetch_defaults_include_required_fastf1_telemetry_topics():
+    assert tuple(SCRIPT_CONFIG["mandatory_topics"]) == TELEMETRY_TOPICS
+    assert set(TELEMETRY_TOPICS).issubset(SCRIPT_CONFIG["topics"])
+    assert SCRIPT_CONFIG["update_existing"] is True

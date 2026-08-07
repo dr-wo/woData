@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import threading
 import time
+import types
 
 import pytest
 
 from wodata.live.replay import (
     ArchiveRecord,
     ArchiveSession,
+    FastF1ArchiveClient,
     ReplayFaultConfig,
     ReplayPlayer,
     build_replay,
@@ -42,6 +45,7 @@ def write_replay(path, events):
 
 def test_session_timestamp_conversion():
     assert session_time_seconds("01:02:03.500") == 3723.5
+    assert session_time_seconds("01:02:03:500") == 3723.5
     assert session_time_seconds("00:00:01:250".replace(":250", ".250")) == 1.25
     assert session_time_seconds(2) == 2.0
     with pytest.raises(ValueError, match="invalid session timestamp"):
@@ -105,6 +109,57 @@ def test_download_refuses_different_existing_archive_without_overwrite(tmp_path)
     download_archive(session, output_root=tmp_path, topics=("Heartbeat",), client=client)
     with pytest.raises(FileExistsError, match="overwrite=True"):
         download_archive(session, output_root=tmp_path, topics=("TimingData",), client=client)
+
+
+def test_download_updates_existing_archive_with_new_telemetry_topics(tmp_path):
+    session = ArchiveSession(2025, 14, "Hungarian Grand Prix", "Race", "R", "/api/")
+    first_client = FakeArchiveClient({
+        "TimingData": [record("TimingData", 1, 0, {"Lines": {}})],
+    })
+    first = download_archive(
+        session,
+        output_root=tmp_path,
+        topics=("TimingData",),
+        client=first_client,
+    )
+    telemetry_client = FakeArchiveClient({
+        "CarData.z": [record("CarData.z", 2, 0, {"Entries": []})],
+        "Position.z": [record("Position.z", 2, 0, {"Position": []})],
+    })
+
+    updated = download_archive(
+        session,
+        output_root=tmp_path,
+        topics=("TimingData", "CarData.z", "Position.z"),
+        mandatory_topics=("CarData.z", "Position.z"),
+        update_existing=True,
+        client=telemetry_client,
+    )
+
+    assert telemetry_client.calls == [("/api/", "CarData.z"), ("/api/", "Position.z")]
+    assert updated.available_topics == ("TimingData", "CarData.z", "Position.z")
+    assert (first.archive_dir / "raw" / "TimingData.json").is_file()
+    manifest = json.loads((first.archive_dir / "manifest.json").read_text())
+    assert manifest["requested_topics"] == ["TimingData", "CarData.z", "Position.z"]
+
+
+@pytest.mark.parametrize("topic,page", [("CarData.z", "car_data"), ("Position.z", "position")])
+def test_fastf1_client_decodes_raw_compressed_telemetry_records(monkeypatch, topic, page):
+    calls = []
+    fake_api = types.SimpleNamespace(
+        fetch_page=lambda path, name: calls.append((path, name)) or ["00:00:01:250encoded"],
+        parse=lambda value, zipped: {"Decoded": value, "Zipped": zipped},
+    )
+    fake_fastf1 = types.ModuleType("fastf1")
+    fake_fastf1._api = fake_api
+    monkeypatch.setitem(sys.modules, "fastf1", fake_fastf1)
+
+    records = FastF1ArchiveClient().fetch_topic("/api/", topic)
+
+    assert calls == [("/api/", page)]
+    assert len(records) == 1
+    assert records[0].session_time_seconds == 1.25
+    assert records[0].payload == {"Decoded": "encoded", "Zipped": True}
 
 
 def test_builder_strict_and_permissive_malformed_record_modes(tmp_path):

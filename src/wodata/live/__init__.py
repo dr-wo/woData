@@ -8,6 +8,8 @@ from .models import (
     LiveMessage,
     LiveSessionSnapshot,
     LiveTimingMessage,
+    LiveTelemetrySample,
+    LivePositionSample,
 )
 from .reducer import LiveSessionStore
 from .replay import (
@@ -41,6 +43,8 @@ __all__ = [
     "LiveSessionStore",
     "LiveTimingController",
     "LiveTimingMessage",
+    "LiveTelemetrySample",
+    "LivePositionSample",
     "LiveTimingSource",
     "ReplayConfig",
     "ReplayEvent",

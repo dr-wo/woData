@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import copy
+import base64
 import math
+import json
+import zlib
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Mapping
@@ -12,6 +15,8 @@ from .models import (
     LiveDriver,
     LiveSessionSnapshot,
     LiveTimingMessage,
+    LiveTelemetrySample,
+    LivePositionSample,
 )
 
 SECTOR_NAMES = ("S1", "S2", "S3")
@@ -104,6 +109,8 @@ class LiveSessionStore:
         self._positions: dict[str, int] = {}
         self._laps: dict[str, dict[int, dict]] = {}
         self._pending: dict[str, dict] = {}
+        self._telemetry_samples: dict[str, list[LiveTelemetrySample]] = {}
+        self._position_samples: dict[str, list[LivePositionSample]] = {}
         self._last_message_at: datetime | None = None
         self._sequence = 0
         self.duplicate_completed_lap_count = 0
@@ -139,6 +146,81 @@ class LiveSessionStore:
             )
         elif message.topic == "TimingAppData" and isinstance(payload, Mapping):
             self._apply_timing_app_data(payload, message.source_timestamp_utc)
+        elif message.topic == "CarData.z":
+            self._apply_car_data(message)
+        elif message.topic == "Position.z":
+            self._apply_position_data(message)
+
+    def _apply_car_data(self, message: LiveTimingMessage) -> None:
+        payload = _decode_compressed_payload(message.payload)
+        entries = payload.get("Entries", ()) if isinstance(payload, Mapping) else ()
+        if not isinstance(entries, list):
+            return
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                continue
+            sample_time = _sample_time_seconds(entry.get("Utc"), message)
+            cars = entry.get("Cars", {})
+            if sample_time is None or not isinstance(cars, Mapping):
+                continue
+            for number, car in cars.items():
+                channels = car.get("Channels", {}) if isinstance(car, Mapping) else {}
+                if not isinstance(channels, Mapping):
+                    continue
+                speed = _as_float(channels.get("2"))
+                if speed is None or speed < 0:
+                    continue
+                number = str(number)
+                current_lap = max(self._laps.get(number, {}), default=0) + 1
+                samples = self._telemetry_samples.setdefault(number, [])
+                samples.append(
+                    LiveTelemetrySample(
+                        number,
+                        sample_time,
+                        current_lap,
+                        speed,
+                        message.source_timestamp_utc,
+                    )
+                )
+                self._trim_telemetry(number, current_lap)
+
+    def _apply_position_data(self, message: LiveTimingMessage) -> None:
+        payload = _decode_compressed_payload(message.payload)
+        positions = payload.get("Position", ()) if isinstance(payload, Mapping) else ()
+        if not isinstance(positions, list):
+            return
+        for sample in positions:
+            if not isinstance(sample, Mapping):
+                continue
+            sample_time = _sample_time_seconds(sample.get("Timestamp"), message)
+            entries = sample.get("Entries", {})
+            if sample_time is None or not isinstance(entries, Mapping):
+                continue
+            for number, position in entries.items():
+                if not isinstance(position, Mapping):
+                    continue
+                x = _as_float(position.get("X"))
+                y = _as_float(position.get("Y"))
+                z = _as_float(position.get("Z"))
+                if x is None or y is None or z is None:
+                    continue
+                status = position.get("Status")
+                on_track = None if status is None else str(status).lower() in {"ontrack", "0"}
+                self._position_samples.setdefault(str(number), []).append(
+                    LivePositionSample(str(number), sample_time, x, y, z, on_track)
+                )
+                latest = self._position_samples[str(number)]
+                cutoff = sample_time - 1200.0
+                self._position_samples[str(number)] = [
+                    item for item in latest if item.session_time_seconds >= cutoff
+                ]
+
+    def _trim_telemetry(self, number: str, current_lap: int) -> None:
+        minimum_lap = max(current_lap - 12, 1)
+        self._telemetry_samples[number] = [
+            sample for sample in self._telemetry_samples[number]
+            if sample.lap_number >= minimum_lap
+        ]
 
     def _apply_driver_list(self, payload: Mapping, timestamp: datetime | None) -> None:
         lines = payload.get("Lines", payload)
@@ -427,4 +509,48 @@ class LiveSessionStore:
             MappingProxyType(dict(self._positions)),
             self._last_message_at,
             tuple(completed_sectors),
+            tuple(
+                sample
+                for number in sorted(self._telemetry_samples)
+                for sample in self._telemetry_samples[number]
+            ),
+            tuple(
+                sample
+                for number in sorted(self._position_samples)
+                for sample in self._position_samples[number]
+            ),
         )
+
+
+def _decode_compressed_payload(payload: object) -> Mapping:
+    if isinstance(payload, Mapping):
+        return payload
+    if not isinstance(payload, str):
+        return {}
+    try:
+        decoded = zlib.decompress(base64.b64decode(payload), -zlib.MAX_WBITS)
+        value = json.loads(decoded.decode("utf-8-sig"))
+    except (ValueError, TypeError, zlib.error, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, Mapping) else {}
+
+
+def _sample_time_seconds(value: object, message: LiveTimingMessage) -> float | None:
+    if value is not None:
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    if message.session_time_seconds is not None:
+        return float(message.session_time_seconds)
+    if message.source_timestamp_utc is not None:
+        return message.source_timestamp_utc.timestamp()
+    return None
+
+
+def _as_float(value: object) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
