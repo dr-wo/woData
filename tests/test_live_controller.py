@@ -1,7 +1,9 @@
 from pathlib import Path
 import time
+from datetime import datetime, timezone
 
-from wodata.live import LiveTimingController, ReplayConfig
+from wodata.live import LiveTimingController, LiveTimingMessage, ReplayConfig
+from wodata.live.fastf1_source import FastF1LiveTimingSource
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "live_phase_1.txt"
@@ -31,3 +33,22 @@ def test_controller_can_replay_twice_without_leaking_queues_or_recorder():
         assert len(result.snapshot.completed_laps) == 6
         assert sum(controller.message_counts.values()) == 13
         controller.stop()
+
+
+def test_replay_flow_control_is_never_applied_to_live_ingress():
+    controller = LiveTimingController()
+    calls = []
+    controller.set_replay_flow_control(lambda _cancel: calls.append("replay"))
+    controller.start_replay(ReplayConfig(FIXTURE, speed=0))
+    deadline = time.monotonic() + 2
+    while controller.is_running and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert len(calls) == 13
+    controller.stop()
+
+    controller._source = FastF1LiveTimingSource()
+    now = datetime.now(timezone.utc)
+    controller._enqueue_message(LiveTimingMessage("Heartbeat", {}, now, now))
+
+    assert len(calls) == 13

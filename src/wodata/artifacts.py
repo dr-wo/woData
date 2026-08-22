@@ -79,6 +79,7 @@ def write_model_snapshot(
         "excluded_sessions": dict(snapshot.excluded_sessions),
         "joint_weighted_cost": snapshot.joint_weighted_cost,
         "session_weighted_costs": dict(snapshot.session_weighted_costs),
+        "sampler_quality": dict(snapshot.sampler_quality),
         "parameter_count": len(rows),
     }
     _write_json(root / "manifest.json", manifest)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,10 +40,23 @@ class DrainResult:
     statuses: tuple[LiveConnectionStatus, ...]
     messages_processed: int
     changed: bool
+    changes: frozenset[str] = frozenset()
+
+
+TELEMETRY_TOPICS = frozenset({"CarData.z", "Position.z"})
+PLANNER_CHANGE_BY_TOPIC = {
+    "DriverList": "drivers",
+    "SessionInfo": "session",
+    "SessionStatus": "session",
+    "TimingData": "timing",
+    "TimingAppData": "tyres",
+    "TrackStatus": "track_status",
+    "LapCount": "lap_count",
+}
 
 
 class LiveTimingController:
-    def __init__(self, *, logger=None) -> None:
+    def __init__(self, *, logger=None, telemetry_sink=None) -> None:
         self.logger = logger or logging.getLogger(__name__)
         self.store = LiveSessionStore()
         self._messages: queue.Queue[LiveTimingMessage] = queue.Queue()
@@ -52,6 +66,16 @@ class LiveTimingController:
         self._recorder: LiveTimingRecorder | None = None
         self._snapshot = self.store.snapshot()
         self.message_counts: Counter[str] = Counter()
+        self._telemetry_sink = telemetry_sink
+        self._replay_flow_control = None
+        self._replay_flow_cancel = threading.Event()
+        self._last_profile_log = time.monotonic()
+
+    def set_telemetry_sink(self, sink) -> None:
+        self._telemetry_sink = sink
+
+    def set_replay_flow_control(self, callback) -> None:
+        self._replay_flow_control = callback
 
     def start_live(self, config: LiveConfig) -> None:
         if self.is_running:
@@ -106,6 +130,7 @@ class LiveTimingController:
         self._messages = queue.Queue()
         self._statuses = queue.Queue()
         self.message_counts.clear()
+        self._replay_flow_cancel.clear()
         self._source = source
         self._thread = threading.Thread(target=self._run_source, daemon=True, name="wodata-live")
         self._thread.start()
@@ -123,9 +148,18 @@ class LiveTimingController:
     def _enqueue_message(self, message: LiveTimingMessage) -> None:
         if self._recorder is not None:
             self._recorder.write(message)
-        self._messages.put(message)
+        if self._telemetry_sink is not None:
+            self._telemetry_sink(message)
+        if self._telemetry_sink is None or message.topic not in TELEMETRY_TOPICS:
+            self._messages.put(message)
+        if (
+            self._replay_flow_control is not None
+            and isinstance(self._source, ReplayLiveTimingSource)
+        ):
+            self._replay_flow_control(self._replay_flow_cancel)
 
     def drain(self, max_messages: int = 500) -> DrainResult:
+        started = time.perf_counter()
         processed = 0
         messages = []
         while processed < max_messages:
@@ -137,16 +171,45 @@ class LiveTimingController:
             messages.append(message)
             processed += 1
         if messages:
-            self._snapshot = self.store.apply_many(messages)
+            reducer_started = time.perf_counter()
+            for message in messages:
+                self.store._apply_message(message)
+            reducer_seconds = time.perf_counter() - reducer_started
+            snapshot_started = time.perf_counter()
+            self._snapshot = self.store.snapshot()
+            snapshot_seconds = time.perf_counter() - snapshot_started
+        else:
+            reducer_seconds = 0.0
+            snapshot_seconds = 0.0
         statuses = []
         while True:
             try:
                 statuses.append(self._statuses.get_nowait())
             except queue.Empty:
                 break
-        return DrainResult(self._snapshot, tuple(statuses), processed, processed > 0)
+        changes = frozenset(
+            PLANNER_CHANGE_BY_TOPIC[message.topic]
+            for message in messages
+            if message.topic in PLANNER_CHANGE_BY_TOPIC
+        )
+        now = time.monotonic()
+        if now - self._last_profile_log >= 5.0:
+            self.logger.debug(
+                "Live planner drain profile: messages=%d total=%.1fms reducer=%.1fms "
+                "snapshot=%.1fms changes=%s",
+                processed,
+                (time.perf_counter() - started) * 1000.0,
+                reducer_seconds * 1000.0,
+                snapshot_seconds * 1000.0,
+                ",".join(sorted(changes)) or "none",
+            )
+            self._last_profile_log = now
+        return DrainResult(
+            self._snapshot, tuple(statuses), processed, bool(changes), changes
+        )
 
     def stop(self) -> None:
+        self._replay_flow_cancel.set()
         if self._source is not None:
             self._source.stop()
         if self._thread is not None and self._thread is not threading.current_thread():

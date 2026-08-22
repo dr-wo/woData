@@ -123,6 +123,7 @@ class ModelSnapshot:
     excluded_sessions: tuple[tuple[str, str], ...] = ()
     joint_weighted_cost: float | None = None
     session_weighted_costs: tuple[tuple[str, float], ...] = ()
+    sampler_quality: tuple[tuple[str, object], ...] = ()
 
 
 @dataclass(frozen=True)

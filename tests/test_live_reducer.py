@@ -47,6 +47,24 @@ def test_partial_driver_metadata_is_deep_merged():
     assert snapshot.drivers[0].full_name == "Driver Alpha"
 
 
+def test_scheduled_total_laps_is_reduced_from_lap_count():
+    store = LiveSessionStore()
+    snapshot = store.apply(
+        message({"CurrentLap": 1, "TotalLaps": 70}, topic="LapCount")
+    )
+    assert snapshot.scheduled_total_laps == 70
+    snapshot = store.apply(message({"CurrentLap": 2}, topic="LapCount"))
+    assert snapshot.scheduled_total_laps == 70
+    snapshot = store.apply(message({"TotalLaps": 68}, topic="LapCount"))
+    assert snapshot.scheduled_total_laps == 70
+
+
+def test_zero_lap_count_placeholder_does_not_block_first_positive_schedule():
+    store = LiveSessionStore()
+    assert store.apply(message({"TotalLaps": 0}, topic="LapCount")).scheduled_total_laps is None
+    assert store.apply(message({"TotalLaps": 44}, topic="LapCount")).scheduled_total_laps == 44
+
+
 def test_cumulative_time_is_unknown_after_missing_internal_lap():
     store = LiveSessionStore()
     store.apply(message({"1": {"Tla": "AAA", "TeamName": "Mercedes"}}, topic="DriverList"))

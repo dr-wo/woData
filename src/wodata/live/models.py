@@ -113,6 +113,7 @@ class LiveSessionSnapshot:
     completed_sectors: tuple[CompletedSector, ...] = ()
     telemetry_samples: tuple[LiveTelemetrySample, ...] = ()
     position_samples: tuple[LivePositionSample, ...] = ()
+    scheduled_total_laps: int | None = None
 
     @classmethod
     def empty(cls) -> "LiveSessionSnapshot":

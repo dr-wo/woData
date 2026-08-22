@@ -31,6 +31,37 @@ The optional `wodata.live` package provides authenticated FastF1 live ingestion,
 mandatory raw recording, deterministic replay, completed-lap state reduction, and
 sector-level timing when the live feed includes `TimingData.Lines[*].Sectors`.
 
+### Live reduction and worker boundary
+
+The live controller now distinguishes planner-state topics from high-volume
+telemetry topics. `CarData.z` and `Position.z` can be sent to a configured
+telemetry sink instead of being copied through the GUI/controller reduction
+queue. Timing, tyres, track status, session state, driver state, and `LapCount`
+continue through `LiveSessionStore`. `DrainResult.changes` reports the affected
+planner areas; a telemetry-only drain is deliberately not a planner redraw.
+
+This split is a performance boundary, not a data-loss policy. Raw recording still
+happens before routing. Replay sources may be back-pressured by the consumer so a
+max-speed replay cannot outrun the telemetry/analysis queues. Cancellation wakes
+that wait during stop/reset.
+
+`LiveSessionStore` defaults to a rolling 12-lap `CarData.z` window and a
+time-based 20-minute `Position.z` window. Tests and analysis workers may request
+unbounded telemetry or a fixed position-sample limit. The raw recording remains
+the authoritative full-fidelity source whenever an in-memory window has trimmed
+old samples.
+
+Compressed telemetry timestamps are converted into the session-time clock when
+both the packet session time and source timestamp exist. Falling back to Unix
+epoch seconds is retained only for inputs without that anchoring information.
+Future traffic/debug code must not compare those two clock domains as if they
+were interchangeable.
+
+`LapCount.TotalLaps` is captured once as `LiveSessionSnapshot.scheduled_total_laps`.
+It is the originally scheduled Race/Sprint distance and must not be inferred from
+the greatest completed lap. Consumers should prefer it over manual configuration
+or current-leader fallbacks.
+
 ```bash
 pip install -e ../Fast-F1
 pip install -e ".[live]"
@@ -132,6 +163,11 @@ selects an unused filename rather than replacing a non-empty capture.
 and tyre-state contracts shared by woStrategy and woPlanner. `wodata.artifacts` writes
 canonical model and strategy CSV/JSON artifacts below `WODATA_ROOT/wostrategy/`, with
 manifests, deterministic hashes, provenance, and append-only run history.
+
+`ModelSnapshot.sampler_quality` is serialized into the model manifest. It is
+diagnostic metadata rather than a posterior parameter. In particular, high ESS
+only indicates stable importance weights; it does not imply narrow uncertainty or
+strong Race evidence.
 
 FastF1 data used by Strategy Prediction is also rooted in woData: raw FastF1 HTTP/parser cache
 under `fastf1/raw_cache/schema_v1`, derived telemetry under `fastf1/telemetry/schema_v1`,

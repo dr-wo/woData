@@ -97,12 +97,20 @@ def _is_older(candidate: datetime | None, current: datetime | None) -> bool:
 
 
 class LiveSessionStore:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        telemetry_lap_window: int | None = 12,
+        position_sample_limit: int | None = None,
+    ) -> None:
+        self.telemetry_lap_window = telemetry_lap_window
+        self.position_sample_limit = position_sample_limit
         self.reset()
 
     def reset(self) -> None:
         self._session_info: dict[str, object] = {}
         self._session_status: str | None = None
+        self._scheduled_total_laps: int | None = None
         self._drivers: dict[str, dict] = {}
         self._timing: dict[str, dict] = {}
         self._tyre_stints: dict[str, dict[int, dict]] = {}
@@ -136,6 +144,14 @@ class LiveSessionStore:
             status = payload.get("Status")
             if status is not None:
                 self._session_status = str(status)
+        elif message.topic == "LapCount" and isinstance(payload, Mapping):
+            total_laps = _as_int(payload.get("TotalLaps"))
+            if (
+                self._scheduled_total_laps is None
+                and total_laps is not None
+                and total_laps > 0
+            ):
+                self._scheduled_total_laps = total_laps
         elif message.topic == "DriverList" and isinstance(payload, Mapping):
             self._apply_driver_list(payload, message.source_timestamp_utc)
         elif message.topic == "TimingData" and isinstance(payload, Mapping):
@@ -210,13 +226,19 @@ class LiveSessionStore:
                     LivePositionSample(str(number), sample_time, x, y, z, on_track)
                 )
                 latest = self._position_samples[str(number)]
-                cutoff = sample_time - 1200.0
-                self._position_samples[str(number)] = [
-                    item for item in latest if item.session_time_seconds >= cutoff
-                ]
+                if self.position_sample_limit is not None:
+                    limit = max(int(self.position_sample_limit), 1)
+                    self._position_samples[str(number)] = latest[-limit:]
+                else:
+                    cutoff = sample_time - 1200.0
+                    self._position_samples[str(number)] = [
+                        item for item in latest if item.session_time_seconds >= cutoff
+                    ]
 
     def _trim_telemetry(self, number: str, current_lap: int) -> None:
-        minimum_lap = max(current_lap - 12, 1)
+        if self.telemetry_lap_window is None:
+            return
+        minimum_lap = max(current_lap - int(self.telemetry_lap_window), 1)
         self._telemetry_samples[number] = [
             sample for sample in self._telemetry_samples[number]
             if sample.lap_number >= minimum_lap
@@ -519,6 +541,7 @@ class LiveSessionStore:
                 for number in sorted(self._position_samples)
                 for sample in self._position_samples[number]
             ),
+            self._scheduled_total_laps,
         )
 
 
@@ -538,8 +561,18 @@ def _decode_compressed_payload(payload: object) -> Mapping:
 def _sample_time_seconds(value: object, message: LiveTimingMessage) -> float | None:
     if value is not None:
         try:
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
-        except ValueError:
+            sample_timestamp = datetime.fromisoformat(
+                str(value).replace("Z", "+00:00")
+            )
+            if (
+                message.session_time_seconds is not None
+                and message.source_timestamp_utc is not None
+            ):
+                return float(message.session_time_seconds) + (
+                    sample_timestamp - message.source_timestamp_utc
+                ).total_seconds()
+            return sample_timestamp.timestamp()
+        except (TypeError, ValueError):
             pass
     if message.session_time_seconds is not None:
         return float(message.session_time_seconds)
