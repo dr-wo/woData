@@ -31,6 +31,8 @@ class LiveDriver:
     full_name: str
     position: int | None
     source_timestamp_utc: datetime | None
+    retired: bool = False
+    retirement_lap: int | None = None
 
 
 @dataclass(frozen=True)

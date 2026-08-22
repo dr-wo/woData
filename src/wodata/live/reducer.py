@@ -116,6 +116,7 @@ class LiveSessionStore:
         self._tyre_stints: dict[str, dict[int, dict]] = {}
         self._positions: dict[str, int] = {}
         self._laps: dict[str, dict[int, dict]] = {}
+        self._retired_after_lap: dict[str, int] = {}
         self._pending: dict[str, dict] = {}
         self._telemetry_samples: dict[str, list[LiveTelemetrySample]] = {}
         self._position_samples: dict[str, list[LivePositionSample]] = {}
@@ -273,6 +274,13 @@ class LiveSessionStore:
             position = _as_int(patch.get("Position"))
             if position is not None and position > 0:
                 self._positions[number] = position
+            if _as_bool(patch.get("Retired")) is True:
+                completed_lap = max(
+                    max(self._laps.get(number, {}), default=0),
+                    _as_int(patch.get("NumberOfLaps")) or 0,
+                )
+                if completed_lap > 0:
+                    self._retired_after_lap.setdefault(number, completed_lap)
             self._update_pending_lap(number, patch, timestamp, session_time_seconds)
 
     def _apply_timing_app_data(self, payload: Mapping, timestamp: datetime | None) -> None:
@@ -344,8 +352,10 @@ class LiveSessionStore:
                 "time_timestamp": None,
                 "sectors": None,
                 "sector_values": [None, None, None],
+                "sector_lap": None,
                 "sectors_seq": 0,
                 "sectors_timestamp": None,
+                "sectors_session_time_seconds": None,
                 "session_time_seconds": None,
                 "committed_seq": 0,
             },
@@ -362,18 +372,34 @@ class LiveSessionStore:
                 pending.update(time=lap_time, time_seq=self._sequence, time_timestamp=timestamp)
         if "Sectors" in patch and not _is_older(timestamp, pending["sectors_timestamp"]):
             sector_updates = _sector_time_updates(patch.get("Sectors"))
+            if sector_updates and pending["sector_lap"] is None:
+                patch_lap_time = _lap_time_seconds(patch.get("LastLapTime"))
+                if patch_lap_time is not None and "NumberOfLaps" in patch:
+                    pending["sector_lap"] = _as_int(patch.get("NumberOfLaps"))
+                else:
+                    completed_lap = pending["lap"]
+                    if completed_lap is None:
+                        completed_lap = max(self._laps.get(number, {}), default=0)
+                    pending["sector_lap"] = completed_lap + 1
             for index, sector_time in sector_updates.items():
                 pending["sector_values"][index] = sector_time
+            if sector_updates:
+                pending.update(
+                    sectors_seq=self._sequence,
+                    sectors_timestamp=timestamp,
+                    sectors_session_time_seconds=session_time_seconds,
+                )
             if all(value is not None for value in pending["sector_values"]):
                 pending.update(
                     sectors=tuple(pending["sector_values"]),
-                    sectors_seq=self._sequence,
-                    sectors_timestamp=timestamp,
                 )
 
         lap = pending["lap"]
         lap_time = pending["time"]
         if lap is None or lap_time is None:
+            return
+        retirement_lap = self._retired_after_lap.get(number)
+        if retirement_lap is not None and lap > retirement_lap:
             return
         driver_laps = self._laps.setdefault(number, {})
         latest_lap = max(driver_laps, default=0)
@@ -419,7 +445,10 @@ class LiveSessionStore:
         pending["time_seq"] = 0
         pending["sectors"] = None
         pending["sector_values"] = [None, None, None]
+        pending["sector_lap"] = None
         pending["sectors_seq"] = 0
+        pending["sectors_timestamp"] = None
+        pending["sectors_session_time_seconds"] = None
 
     def _recompute_cumulative(self, number: str, start_lap: int) -> None:
         driver_laps = self._laps[number]
@@ -460,6 +489,8 @@ class LiveSessionStore:
                     full_name,
                     self._positions.get(number),
                     data.get("_timestamp"),
+                    number in self._retired_after_lap,
+                    self._retired_after_lap.get(number),
                 )
             )
         drivers.sort(key=lambda item: (item.position is None, item.position or 999, item.driver_number))
@@ -467,7 +498,9 @@ class LiveSessionStore:
         completed_laps = []
         completed_sectors = []
         driver_lookup = {driver.driver_number: driver for driver in drivers}
-        for number, laps in self._laps.items():
+        timing_numbers = set(self._laps).union(self._pending)
+        for number in sorted(timing_numbers):
+            laps = self._laps.get(number, {})
             driver = driver_lookup.get(number)
             code = driver.driver_code if driver else number
             team = driver.team if driver else ""
@@ -521,6 +554,50 @@ class LiveSessionStore:
                             data.get("session_time_seconds"),
                         )
                     )
+            pending = self._pending.get(number, {})
+            pending_lap = pending.get("sector_lap")
+            retirement_lap = self._retired_after_lap.get(number)
+            if (
+                pending_lap is None
+                or pending_lap in laps
+                or (retirement_lap is not None and pending_lap > retirement_lap)
+            ):
+                continue
+            base_cumulative = 0.0
+            if laps:
+                previous_lap = laps.get(pending_lap - 1)
+                if previous_lap is None:
+                    base_cumulative = None
+                else:
+                    base_cumulative = previous_lap.get("cumulative_time_s")
+            running = base_cumulative
+            tyre = self._tyre_assignment(number, pending_lap)
+            for sector_index, sector_time in enumerate(
+                pending.get("sector_values", ()), start=1
+            ):
+                if sector_time is None:
+                    break
+                if running is not None:
+                    running += sector_time
+                completed_sectors.append(
+                    CompletedSector(
+                        number,
+                        code,
+                        team,
+                        pending_lap,
+                        SECTOR_NAMES[sector_index - 1],
+                        pending_lap * 3 - 3 + sector_index,
+                        sector_time,
+                        running,
+                        self._positions.get(number),
+                        pending.get("sectors_timestamp"),
+                        tyre.get("compound"),
+                        tyre.get("tyre_life"),
+                        tyre.get("stint"),
+                        tyre.get("fresh_tyre"),
+                        pending.get("sectors_session_time_seconds"),
+                    )
+                )
         completed_laps.sort(key=lambda item: (item.lap_number, item.driver_number))
         completed_sectors.sort(key=lambda item: (item.segment_index, item.driver_number))
         return LiveSessionSnapshot(

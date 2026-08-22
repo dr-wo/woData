@@ -77,6 +77,16 @@ or the feed omits a lap/sector time, the reducer keeps the data it has and marks
 later cumulative timing unknown after internal gaps instead of fabricating a
 continuous race clock.
 
+Incremental `TimingData` sector patches are published as soon as S1, S2, or S3
+is available; a full lap is not required. Pending sector values are retained
+across patches and attributed using the declared/last completed lap. A driver is
+cut off only when `TimingData.Lines[*].Retired` is explicitly true. The first
+such message freezes the greatest completed/declared lap; missing timing, status
+text, or lack of movement is deliberately not interpreted as DNF. Consequently,
+a feed that omits `Retired` will not be truncated automatically. Preserve the
+canonical recording when diagnosing lap attribution or retirement because late
+connections may not contain earlier sectors.
+
 ### Archived session replay
 
 Archive replay is a separate message source and deliberately uses the same

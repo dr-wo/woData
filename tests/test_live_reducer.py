@@ -132,6 +132,123 @@ def test_sparse_archive_sector_updates_are_accumulated_for_completed_lap():
     assert [sector.sector_time_s for sector in snapshot.completed_sectors] == [30.0, 31.0, 29.0]
 
 
+def test_current_lap_sectors_are_published_as_each_sector_completes():
+    store = LiveSessionStore()
+    store.apply(message({"1": {"Tla": "AAA", "TeamName": "Mercedes"}}, topic="DriverList"))
+    store.apply(
+        message(
+            {"Lines": {"1": {"NumberOfLaps": 1, "LastLapTime": {"Value": "1:30"}}}}
+        )
+    )
+
+    snapshot = store.apply(
+        message({"Lines": {"1": {"Sectors": {"0": {"Value": "30.000"}}}}})
+    )
+    assert [
+        (sector.lap_number, sector.sector, sector.cumulative_time_s)
+        for sector in snapshot.completed_sectors
+    ] == [
+        (2, "S1", 120.0),
+    ]
+
+    snapshot = store.apply(
+        message({"Lines": {"1": {"Sectors": {"1": {"Value": "31.000"}}}}})
+    )
+    assert [
+        (sector.lap_number, sector.sector, sector.cumulative_time_s)
+        for sector in snapshot.completed_sectors
+    ] == [
+        (2, "S1", 120.0),
+        (2, "S2", 151.0),
+    ]
+
+    snapshot = store.apply(
+        message({"Lines": {"1": {"Sectors": {"2": {"Value": "29.000"}}}}})
+    )
+    assert [sector.sector for sector in snapshot.completed_sectors[-3:]] == [
+        "S1", "S2", "S3"
+    ]
+
+
+def test_late_connection_publishes_sector_before_any_full_lap_is_available():
+    store = LiveSessionStore()
+    store.apply(message({"1": {"Tla": "AAA", "TeamName": "Mercedes"}}, topic="DriverList"))
+    store.apply(message({"Lines": {"1": {"NumberOfLaps": 1}}}))
+
+    snapshot = store.apply(
+        message({"Lines": {"1": {"Sectors": {"0": {"Value": "30.000"}}}}})
+    )
+
+    assert snapshot.completed_laps == ()
+    assert [
+        (sector.lap_number, sector.sector, sector.cumulative_time_s)
+        for sector in snapshot.completed_sectors
+    ] == [(2, "S1", 30.0)]
+
+
+def test_retirement_after_completed_lap_stops_later_timing_accumulation():
+    store = LiveSessionStore()
+    store.apply(message({"27": {"Tla": "HUL", "TeamName": "Audi"}}, topic="DriverList"))
+    for lap in range(1, 6):
+        store.apply(
+            message(
+                {"Lines": {"27": {"NumberOfLaps": lap, "LastLapTime": {"Value": "1:20"}}}}
+            )
+        )
+
+    snapshot = store.apply(
+        message({"Lines": {"27": {"Retired": True, "Stopped": True}}})
+    )
+    assert snapshot.drivers[0].retired is True
+    assert snapshot.drivers[0].retirement_lap == 5
+
+    store.apply(message({"Lines": {"27": {"Retired": False, "Stopped": False}}}))
+    snapshot = store.apply(
+        message(
+            {
+                "Lines": {
+                    "27": {
+                        "NumberOfLaps": 6,
+                        "LastLapTime": {"Value": "22:31.924"},
+                        "Sectors": [
+                            {"Value": "30.000"},
+                            {"Value": "31.000"},
+                            {"Value": "29.000"},
+                        ],
+                    }
+                }
+            }
+        )
+    )
+
+    assert [lap.lap_number for lap in snapshot.completed_laps] == [1, 2, 3, 4, 5]
+    assert snapshot.completed_laps[-1].cumulative_time_s == 400.0
+    assert {sector.lap_number for sector in snapshot.completed_sectors} <= {1, 2, 3, 4, 5}
+
+
+def test_pre_start_retired_flag_without_completed_lap_is_not_sticky():
+    store = LiveSessionStore()
+    store.apply(message({"11": {"Tla": "PER", "TeamName": "Cadillac"}}, topic="DriverList"))
+    store.apply(message({"Lines": {"11": {"Retired": True, "Stopped": True}}}))
+    snapshot = store.apply(
+        message(
+            {
+                "Lines": {
+                    "11": {
+                        "Retired": False,
+                        "Stopped": False,
+                        "NumberOfLaps": 1,
+                        "LastLapTime": {"Value": "1:21"},
+                    }
+                }
+            }
+        )
+    )
+
+    assert snapshot.drivers[0].retired is False
+    assert [lap.lap_number for lap in snapshot.completed_laps] == [1]
+
+
 def test_timing_app_stints_assign_compound_and_tyre_life_to_laps():
     store = LiveSessionStore()
     store.apply(message({"1": {"Tla": "AAA", "TeamName": "Mercedes"}}, topic="DriverList"))
