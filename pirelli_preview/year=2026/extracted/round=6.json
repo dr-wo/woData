@@ -1,0 +1,20 @@
+{
+  "asphalt_abrasion": 1,
+  "asphalt_grip": 2,
+  "circuit": "Circuit de Monaco",
+  "event": "Monaco Grand Prix",
+  "extraction_model": "codex-vision-manual-v1",
+  "extraction_timestamp": "2026-08-22T14:10:00+00:00",
+  "hard_compound": "C3",
+  "lateral": 1,
+  "medium_compound": "C4",
+  "review_status": "accepted",
+  "round": 6,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "soft_compound": "C5",
+  "source_file": "1920_06-mc26-preview-en.jpg",
+  "source_hash": "0db53a77cbb934d9ddb1db49e91608cf36596823a1610f7c112df923dfee6661",
+  "traction": 5,
+  "tyre_stress": 1
+}

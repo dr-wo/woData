@@ -1,0 +1,20 @@
+{
+  "asphalt_abrasion": 3,
+  "asphalt_grip": 3,
+  "circuit": "Circuit de Spa-Francorchamps",
+  "event": "Belgian Grand Prix",
+  "extraction_model": "codex-vision-manual-v1",
+  "extraction_timestamp": "2026-08-22T14:10:00+00:00",
+  "hard_compound": "C2",
+  "lateral": 5,
+  "medium_compound": "C3",
+  "review_status": "accepted",
+  "round": 10,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "soft_compound": "C4",
+  "source_file": "1920_10-be26-preview-en.jpg",
+  "source_hash": "430816eb9c56954bf51315ddbb43a4ab8e7067634de513ee861bf2e7d8f24bfa",
+  "traction": 4,
+  "tyre_stress": 5
+}

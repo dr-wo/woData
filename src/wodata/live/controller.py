@@ -21,7 +21,7 @@ class LiveConfig:
     round_number: int
     session: str
     data_root: Path | None = None
-    timeout: int = 60
+    timeout: int = 0
     no_auth: bool = False
 
 
@@ -177,12 +177,11 @@ class LiveTimingController:
             for message in messages:
                 self.store._apply_message(message)
             reducer_seconds = time.perf_counter() - reducer_started
-            snapshot_started = time.perf_counter()
-            self._snapshot = self.store.snapshot()
-            snapshot_seconds = time.perf_counter() - snapshot_started
         else:
             reducer_seconds = 0.0
-            snapshot_seconds = 0.0
+        snapshot_started = time.perf_counter()
+        self._snapshot = self.store.snapshot()
+        snapshot_seconds = time.perf_counter() - snapshot_started
         statuses = []
         while True:
             try:

@@ -1,0 +1,20 @@
+{
+  "asphalt_abrasion": 4,
+  "asphalt_grip": 2,
+  "circuit": "Circuit de Barcelona-Catalunya",
+  "event": "Barcelona-Catalunya Grand Prix",
+  "extraction_model": "codex-vision-manual-v1",
+  "extraction_timestamp": "2026-08-22T14:10:00+00:00",
+  "hard_compound": "C2",
+  "lateral": 5,
+  "medium_compound": "C3",
+  "review_status": "accepted",
+  "round": 7,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "soft_compound": "C4",
+  "source_file": "1920_07-bc26-preview-en.jpg",
+  "source_hash": "07658458ee0954da1a26d86f09d2d469c7bcd97fe696776128e682f76801da03",
+  "traction": 3,
+  "tyre_stress": 5
+}

@@ -1,0 +1,20 @@
+{
+  "asphalt_abrasion": 1,
+  "asphalt_grip": 2,
+  "circuit": "Circuit Gilles-Villeneuve",
+  "event": "Canadian Grand Prix",
+  "extraction_model": "codex-vision-manual-v1",
+  "extraction_timestamp": "2026-08-22T14:10:00+00:00",
+  "hard_compound": "C3",
+  "lateral": 1,
+  "medium_compound": "C4",
+  "review_status": "accepted",
+  "round": 5,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "soft_compound": "C5",
+  "source_file": "1920_05-ca26-preview-en.jpg",
+  "source_hash": "fa0db045ad1d49c6db0d42cb48840a5c45928f66826862c78d27b92495c0aed9",
+  "traction": 4,
+  "tyre_stress": 3
+}

@@ -1,0 +1,20 @@
+{
+  "asphalt_abrasion": 2,
+  "asphalt_grip": 2,
+  "circuit": "Albert Park Circuit",
+  "event": "Australian Grand Prix",
+  "extraction_model": "codex-vision-manual-v1",
+  "extraction_timestamp": "2026-08-22T14:10:00+00:00",
+  "hard_compound": "C3",
+  "lateral": 3,
+  "medium_compound": "C4",
+  "review_status": "accepted",
+  "round": 1,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "soft_compound": "C5",
+  "source_file": "1920_01-au26-preview-en.jpg",
+  "source_hash": "e4a7c516bcd56a3057e2b7df5d92068e175b35bc71d12ef18e63d41e57c1f681",
+  "traction": 2,
+  "tyre_stress": 3
+}

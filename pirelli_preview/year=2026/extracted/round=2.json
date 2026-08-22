@@ -1,0 +1,20 @@
+{
+  "asphalt_abrasion": 2,
+  "asphalt_grip": 3,
+  "circuit": "Shanghai International Circuit",
+  "event": "Chinese Grand Prix",
+  "extraction_model": "codex-vision-manual-v1",
+  "extraction_timestamp": "2026-08-22T14:10:00+00:00",
+  "hard_compound": "C2",
+  "lateral": 4,
+  "medium_compound": "C3",
+  "review_status": "accepted",
+  "round": 2,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "soft_compound": "C4",
+  "source_file": "1920_02-cn26-preview-en.jpg",
+  "source_hash": "ed409698715fad970fd445b5ea1a8db3f0b3a99e33a04d59062055a0fd619003",
+  "traction": 3,
+  "tyre_stress": 4
+}

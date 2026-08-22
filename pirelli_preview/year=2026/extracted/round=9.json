@@ -1,0 +1,20 @@
+{
+  "asphalt_abrasion": 2,
+  "asphalt_grip": 4,
+  "circuit": "Silverstone Circuit",
+  "event": "British Grand Prix",
+  "extraction_model": "codex-vision-manual-v1",
+  "extraction_timestamp": "2026-08-22T14:10:00+00:00",
+  "hard_compound": "C1",
+  "lateral": 5,
+  "medium_compound": "C2",
+  "review_status": "accepted",
+  "round": 9,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "soft_compound": "C3",
+  "source_file": "1920_09-gb26-preview-en.jpg",
+  "source_hash": "5128e20dd1217b044a4405e894e9bbdddc8abbd0bb4c90a4fac03b13b8f6181e",
+  "traction": 3,
+  "tyre_stress": 5
+}

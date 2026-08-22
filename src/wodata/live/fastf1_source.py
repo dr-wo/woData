@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import threading
+import time
 from datetime import datetime, timezone
 
 from .models import LiveConnectionStatus, LiveTimingMessage
@@ -22,7 +25,7 @@ LIVE_PHASE_1_TOPICS = (
 
 
 class FastF1LiveTimingSource:
-    def __init__(self, *, timeout: int = 60, no_auth: bool = False, logger=None) -> None:
+    def __init__(self, *, timeout: int = 0, no_auth: bool = False, logger=None) -> None:
         self.timeout = timeout
         self.no_auth = no_auth
         self.logger = logger
@@ -58,19 +61,60 @@ class FastF1LiveTimingSource:
                 emit_status(LiveConnectionStatus("receiving", "Live timing messages received"))
 
         class StatusSignalRClient(SignalRClient):
+            def __init__(inner_self) -> None:
+                # FastF1 owns the SignalR connection but its public client only
+                # supports recording to a file.  Keep the file sink harmless and
+                # adapt incoming records to wodata's in-process callback.
+                super().__init__(
+                    filename=os.devnull,
+                    timeout=self.timeout,
+                    logger=self.logger,
+                    no_auth=self.no_auth,
+                )
+                inner_self.topics = list(LIVE_PHASE_1_TOPICS)
+                inner_self._stop_requested = threading.Event()
+
             def _on_connect(inner_self) -> None:
                 super()._on_connect()
                 emit_status(LiveConnectionStatus("connected", "Connected; waiting for messages"))
 
+            def _on_message(inner_self, message) -> None:
+                inner_self._t_last_message = time.time()
+                result = getattr(message, "result", None)
+                if isinstance(result, dict):
+                    for topic, payload in result.items():
+                        on_message((topic, payload, None))
+                    return
+                if isinstance(message, (list, tuple)) and len(message) == 3:
+                    on_message(message)
+                    return
+                inner_self.logger.error(
+                    "Unknown live timing message format: %s", type(message).__name__
+                )
+
+            def _supervise(inner_self) -> None:
+                inner_self._t_last_message = time.time()
+                while not inner_self._stop_requested.wait(1.0):
+                    if (
+                        inner_self.timeout != 0
+                        and time.time() - inner_self._t_last_message > inner_self.timeout
+                    ):
+                        inner_self.logger.warning(
+                            "Timeout - received no data for more than %s seconds!",
+                            inner_self.timeout,
+                        )
+                        inner_self.stop()
+                        return
+
+            def stop(inner_self) -> None:
+                inner_self._stop_requested.set()
+                if inner_self._connection is not None:
+                    inner_self._connection.stop()
+                if inner_self._output_file is not None:
+                    inner_self._output_file.close()
+
         emit_status(LiveConnectionStatus("authenticating", "F1 authentication required"))
-        self._client = StatusSignalRClient(
-            filename=None,
-            timeout=self.timeout,
-            logger=self.logger,
-            no_auth=self.no_auth,
-            topics=LIVE_PHASE_1_TOPICS,
-            on_message=on_message,
-        )
+        self._client = StatusSignalRClient()
         emit_status(LiveConnectionStatus("connecting", "Connecting to F1 live timing"))
         try:
             self._client.start()

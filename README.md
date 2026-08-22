@@ -213,3 +213,24 @@ remain as separate files in the same partition because they can be much larger.
 is still accepted as a legacy environment override. With sibling checkouts and
 no override, running from woStrategy or woPlanner resolves the adjacent `woData`
 directory automatically.
+
+## Pirelli previews
+
+The downstream interpretation of these descriptors, including the ordinal 1-5 endpoint
+compromise and the cross-event model's complete assumptions, is documented in
+[`../woStrategy/doc/CROSS_EVENT_TYRE_PREDICTION_V1.md`](../woStrategy/doc/CROSS_EVENT_TYRE_PREDICTION_V1.md).
+
+Pirelli preview images and validated extraction artifacts use:
+
+```text
+pirelli_preview/year=YYYY/
+  1920_NN-*-preview-en.jpg
+  extracted/round=N.json
+  pirelli_preview_YYYY.csv
+```
+
+The image SHA256 controls extraction caching. Vision output is validated and stored
+as per-event JSON; the annual CSV is rebuilt deterministically and is never edited
+by the vision model. Missing or ambiguous values remain null and require manual
+review. `traction` and `lateral` are retained as raw descriptors but are not V1
+tyre-prediction features.

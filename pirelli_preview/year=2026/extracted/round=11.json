@@ -1,0 +1,20 @@
+{
+  "asphalt_abrasion": 3,
+  "asphalt_grip": 3,
+  "circuit": "Hungaroring",
+  "event": "Hungarian Grand Prix",
+  "extraction_model": "codex-vision-manual-v1",
+  "extraction_timestamp": "2026-08-22T14:10:00+00:00",
+  "hard_compound": "C3",
+  "lateral": 3,
+  "medium_compound": "C4",
+  "review_status": "accepted",
+  "round": 11,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "soft_compound": "C5",
+  "source_file": "1920_11-hu26-preview-en.jpg",
+  "source_hash": "b15a1c9f4df22f515eb7edfcb26e6f94e7e14c7c15ffc5c02c66de45e4a43bf6",
+  "traction": 4,
+  "tyre_stress": 3
+}

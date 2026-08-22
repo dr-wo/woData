@@ -1,0 +1,20 @@
+{
+  "asphalt_abrasion": 3,
+  "asphalt_grip": 3,
+  "circuit": "Circuit Zandvoort",
+  "event": "Dutch Grand Prix",
+  "extraction_model": "codex-vision-manual-v1",
+  "extraction_timestamp": "2026-08-22T14:10:00+00:00",
+  "hard_compound": "C2",
+  "lateral": 4,
+  "medium_compound": "C3",
+  "review_status": "accepted",
+  "round": 12,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "soft_compound": "C4",
+  "source_file": "1920_12-nl26-preview-en.jpg",
+  "source_hash": "6500df2dd74e23fb1229f495a32097735435438b4a90630bbdb763e97692b0d1",
+  "traction": 3,
+  "tyre_stress": 5
+}

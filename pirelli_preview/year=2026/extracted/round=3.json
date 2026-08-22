@@ -1,0 +1,20 @@
+{
+  "asphalt_abrasion": 3,
+  "asphalt_grip": 4,
+  "circuit": "Suzuka Circuit",
+  "event": "Japanese Grand Prix",
+  "extraction_model": "codex-vision-manual-v1",
+  "extraction_timestamp": "2026-08-22T14:10:00+00:00",
+  "hard_compound": "C1",
+  "lateral": 5,
+  "medium_compound": "C2",
+  "review_status": "accepted",
+  "round": 3,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "soft_compound": "C3",
+  "source_file": "1920_03-jp26-preview-en.jpg",
+  "source_hash": "b5868bcc67e3e872ac59e29796384b5d09b7c4ccd862b1ecc950f39945b22c54",
+  "traction": 3,
+  "tyre_stress": 5
+}

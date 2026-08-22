@@ -13,6 +13,8 @@ class QualiPitState(str, Enum):
     FIRED_UP = "FIRED_UP"
     QUEUE = "QUEUE"
     ON_TRACK = "ON_TRACK"
+    IN_LAP = "INLAP"
+    IN_PIT = "IN-PIT"
 
 
 @dataclass(frozen=True)
@@ -20,6 +22,13 @@ class QualiCheckpoint:
     kind: str
     index: int
     elapsed_s: float
+
+
+@dataclass(frozen=True)
+class QualiTyreStint:
+    compound: str
+    start_laps: int
+    fresh: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +51,7 @@ class QualiRawDriverState:
     gear: int | None = None
     latest_telemetry_time_s: float | None = None
     latest_position_time_s: float | None = None
+    tyre_history: tuple[QualiTyreStint, ...] = ()
 
 
 @dataclass(frozen=True)

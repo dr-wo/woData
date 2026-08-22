@@ -1,0 +1,20 @@
+{
+  "asphalt_abrasion": 3,
+  "asphalt_grip": 3,
+  "circuit": "Miami International Autodrome",
+  "event": "Miami Grand Prix",
+  "extraction_model": "codex-vision-manual-v1",
+  "extraction_timestamp": "2026-08-22T14:10:00+00:00",
+  "hard_compound": "C3",
+  "lateral": 3,
+  "medium_compound": "C4",
+  "review_status": "accepted",
+  "round": 4,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "soft_compound": "C5",
+  "source_file": "1920_04-mi26-preview-en.jpg",
+  "source_hash": "042b42c77272d7294754e3f6a09001290b408f22c3c6ce3b55cb53ec474477e9",
+  "traction": 3,
+  "tyre_stress": 3
+}
