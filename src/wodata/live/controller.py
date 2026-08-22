@@ -48,7 +48,9 @@ PLANNER_CHANGE_BY_TOPIC = {
     "DriverList": "drivers",
     "SessionInfo": "session",
     "SessionStatus": "session",
+    "ExtrapolatedClock": "clock",
     "TimingData": "timing",
+    "TimingStats": "timing",
     "TimingAppData": "tyres",
     "TrackStatus": "track_status",
     "LapCount": "lap_count",
@@ -56,9 +58,9 @@ PLANNER_CHANGE_BY_TOPIC = {
 
 
 class LiveTimingController:
-    def __init__(self, *, logger=None, telemetry_sink=None) -> None:
+    def __init__(self, *, logger=None, telemetry_sink=None, store=None) -> None:
         self.logger = logger or logging.getLogger(__name__)
-        self.store = LiveSessionStore()
+        self.store = store or LiveSessionStore()
         self._messages: queue.Queue[LiveTimingMessage] = queue.Queue()
         self._statuses: queue.Queue[LiveConnectionStatus] = queue.Queue()
         self._source = None

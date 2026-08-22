@@ -11,6 +11,88 @@ from . import get_data_root
 from .contracts import ModelSnapshot, SCHEMA_VERSION, StrategyRecord, canonical_hash
 
 
+def pre_quali_root(
+    year: int, round_number: int, data_root: str | Path | None = None
+) -> Path:
+    return (
+        get_data_root(data_root) / "wostrategy" / "pre_quali" / SCHEMA_VERSION
+        / f"year={int(year)}" / f"round={int(round_number)}"
+    )
+
+
+def write_pre_quali_analysis(
+    laps, durations, track_progression, *, year: int, round_number: int,
+    push_threshold_fraction: float, data_root: str | Path | None = None,
+) -> Path:
+    """Persist planner-facing pre-qualifying tables using woData path ownership."""
+    root = pre_quali_root(year, round_number, data_root)
+    root.mkdir(parents=True, exist_ok=True)
+    laps.to_csv(root / "lap_roles.csv", index=False)
+    durations.to_csv(root / "duration_summary.csv", index=False)
+    track_progression.to_csv(root / "track_progression.csv", index=False)
+    _write_json(root / "manifest.json", {
+        "schema_version": SCHEMA_VERSION,
+        "year": int(year), "round": int(round_number),
+        "push_threshold_fraction": float(push_threshold_fraction),
+        "lap_count": int(len(laps)), "created_at": datetime.now().isoformat(),
+    })
+    return root
+
+
+def read_pre_quali_analysis(
+    *, year: int, round_number: int, data_root: str | Path | None = None,
+):
+    import pandas as pd
+    root = pre_quali_root(year, round_number, data_root)
+    def read_table(name: str):
+        path = root / name
+        if not path.read_text(encoding="utf-8").strip():
+            return pd.DataFrame()
+        return pd.read_csv(path)
+
+    return (
+        read_table("lap_roles.csv"),
+        read_table("duration_summary.csv"),
+        read_table("track_progression.csv"),
+    )
+
+
+def pit_lane_geometry_path(
+    *, year: int, round_number: int, data_root: str | Path | None = None,
+) -> Path:
+    return (
+        get_data_root(data_root) / "wodata" / "pit_lane_geometry" / SCHEMA_VERSION
+        / f"year={int(year)}" / f"round={int(round_number)}" / "geometry.json"
+    )
+
+
+def write_pit_lane_geometry(
+    centreline: Iterable[tuple[float, float]], *, year: int, round_number: int,
+    maximum_distance: float = 400.0, data_root: str | Path | None = None,
+) -> Path:
+    path = pit_lane_geometry_path(
+        year=year, round_number=round_number, data_root=data_root
+    )
+    points = [[float(x), float(y)] for x, y in centreline]
+    if len(points) < 2:
+        raise ValueError("Pit-lane geometry requires at least two centreline points")
+    _write_json(path, {
+        "schema_version": SCHEMA_VERSION, "centreline": points,
+        "maximum_distance": float(maximum_distance),
+    })
+    return path
+
+
+def read_pit_lane_geometry(
+    *, year: int, round_number: int, data_root: str | Path | None = None,
+) -> dict[str, object]:
+    path = pit_lane_geometry_path(
+        year=year, round_number=round_number, data_root=data_root
+    )
+    with path.open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 def weekend_model_root(
     year: int, round_number: int, data_root: str | Path | None = None
 ) -> Path:

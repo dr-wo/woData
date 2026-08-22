@@ -27,6 +27,8 @@ from .replay import (
 )
 from .source import LiveMessageSource, LiveTimingSource
 from .synthetic_source import SyntheticLiveTimingSource
+from .quali_models import QualiCheckpoint, QualiPitState, QualiRawDriverState, QualiRawSnapshot
+from .quali_reducer import PitLaneGeometry, QualiSessionStore
 
 __all__ = [
     "CompletedLap",
@@ -59,4 +61,10 @@ __all__ = [
     "download_archive",
     "resolve_archive_session",
     "SyntheticLiveTimingSource",
+    "QualiCheckpoint",
+    "QualiPitState",
+    "QualiRawDriverState",
+    "QualiRawSnapshot",
+    "PitLaneGeometry",
+    "QualiSessionStore",
 ]
