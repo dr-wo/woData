@@ -11,6 +11,9 @@ from . import get_data_root
 from .contracts import ModelSnapshot, SCHEMA_VERSION, StrategyRecord, canonical_hash
 
 
+FP_INFORMATION_ORDER = {"FP1": 1, "FP2": 2, "FP3": 3}
+
+
 def pre_quali_root(
     year: int, round_number: int, data_root: str | Path | None = None
 ) -> Path:
@@ -132,6 +135,9 @@ def write_model_snapshot(
 ) -> Path:
     root = weekend_model_root(year, round_number, data_root)
     scope = snapshot.source_scope.upper()
+    included_sessions, max_information_session, information_cutoff = (
+        _snapshot_information_state(snapshot)
+    )
     destination = root / ("aggregate" if scope == "AGGREGATE" else f"sessions/{scope}")
     destination.mkdir(parents=True, exist_ok=True)
     rows = [_csv_row(asdict(parameter)) for parameter in snapshot.parameters]
@@ -158,6 +164,9 @@ def write_model_snapshot(
         "stale_reason": snapshot.stale_reason,
         "source_analysis_ids": list(snapshot.source_analysis_ids),
         "contributing_sessions": list(snapshot.contributing_sessions),
+        "included_sessions": list(included_sessions),
+        "max_information_session": max_information_session,
+        "information_cutoff": information_cutoff,
         "excluded_sessions": dict(snapshot.excluded_sessions),
         "joint_weighted_cost": snapshot.joint_weighted_cost,
         "session_weighted_costs": dict(snapshot.session_weighted_costs),
@@ -171,6 +180,44 @@ def write_model_snapshot(
     _append_csv(history / "parameter_history.csv", rows)
     _append_csv(history / "analysis_runs.csv", [_csv_row(manifest)])
     return destination
+
+
+def _snapshot_information_state(
+    snapshot: ModelSnapshot,
+) -> tuple[tuple[str, ...], str | None, str]:
+    """Validate and describe the information cutoff before artifact mutation."""
+    scope = str(snapshot.source_scope).upper()
+    included = tuple(
+        dict.fromkeys(str(value).upper() for value in snapshot.contributing_sessions)
+    )
+    if not included and scope != "AGGREGATE":
+        included = (scope,)
+    if scope in FP_INFORMATION_ORDER:
+        cutoff = FP_INFORMATION_ORDER[scope]
+        contaminated = [
+            value
+            for value in included
+            if value not in FP_INFORMATION_ORDER
+            or FP_INFORMATION_ORDER[value] > cutoff
+        ]
+        if contaminated:
+            raise ValueError(
+                f"Cannot write {scope} snapshot with information beyond its cutoff: "
+                f"{sorted(contaminated)}"
+            )
+        maximum = max(
+            included,
+            key=lambda value: FP_INFORMATION_ORDER[value],
+            default=scope,
+        )
+        return included, maximum, scope
+    maximum = None
+    if included:
+        maximum = max(
+            included,
+            key=lambda value: FP_INFORMATION_ORDER.get(value, 100),
+        )
+    return included, maximum, "latest" if scope == "AGGREGATE" else scope
 
 
 def read_latest_model_snapshot(
