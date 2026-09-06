@@ -12,6 +12,10 @@ from .models import (
     LivePositionSample,
 )
 from .reducer import LiveSessionStore
+from .recovery import (
+    CanonicalRecovery, RecoveryReport, discover_live_recordings, load_recording,
+    merge_recordings, recover_replay_directory,
+)
 from .replay import (
     ArchiveReplaySource,
     ArchiveRecord,
@@ -49,6 +53,12 @@ __all__ = [
     "LiveMessageSource",
     "LiveSessionSnapshot",
     "LiveSessionStore",
+    "RecoveryReport",
+    "CanonicalRecovery",
+    "recover_replay_directory",
+    "discover_live_recordings",
+    "load_recording",
+    "merge_recordings",
     "LiveTimingController",
     "LiveTimingMessage",
     "LiveTelemetrySample",

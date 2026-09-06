@@ -25,6 +25,52 @@ When a new season changes teams, drivers, or colours, update
 `tests/test_colours.py`. Consumer packages should import the shared mappings
 instead of defining local palettes.
 
+## Event identity and race distance
+
+`wodata.events` resolves a canonical `YYYY-RR` event identifier into FastF1
+schedule metadata. Legacy identifiers with a descriptive suffix, such as
+`2026-07-Monaco`, are accepted but canonicalized to `2026-07`.
+
+Race distance resolution is provenance-aware. A manual override wins first,
+followed by versioned pre-race metadata in
+`src/wodata/data/event_metadata/schema_v1/events.json`, then FastF1's loaded
+Race session metadata/results. If none of those sources provides a defensible
+distance, the result remains unavailable rather than being inferred from partial
+live laps. Packaged event metadata should record its source URL and verification
+date.
+
+```python
+from wodata import resolve_event, resolve_race_distance
+
+event = resolve_event("2026-12")
+total_laps, source = resolve_race_distance(event)
+```
+
+## Weekend workflow runs
+
+`WeekendRunStore` provides immutable, versioned storage for small cross-package
+weekend workflow outputs under:
+
+```text
+woweekend/runs/schema_v1/
+  event=YYYY-RR/workflow=WORKFLOW/runs/RUN_ID/
+```
+
+Each run records its identity and generation time. Saved artifacts cannot be
+overwritten and have SHA256/size metadata. A manifest status of `SUCCESS` or
+`PARTIAL` makes a run eligible for `select_before(...)`, which supports strict
+pre-session selection and required-artifact checks. Heavy reproducible caches
+are stored as explicit artifact references; a missing referenced target fails
+instead of silently substituting a newer cache.
+
+```python
+from wodata import WeekendRunStore
+
+run = WeekendRunStore.create(event="2026-12", workflow="race_preparation")
+run.save_json("config.input", {"source": "operator"})
+run.save_manifest({"status": "SUCCESS"})
+```
+
 ## Live timing
 
 The optional `wodata.live` package provides authenticated FastF1 live ingestion,
@@ -71,11 +117,28 @@ Recordings use the shared data root under
 `wodata/live_timing/schema_v1/year=.../round=.../session=...`.
 
 `LiveTimingController.start_live()` records every canonical raw message to
-`live_timing_raw.txt` before reduction. The same file can be passed to
-`ReplayLiveTimingSource` for deterministic debugging. If a recording starts late
+`live_timing_raw.jsonl` before reduction. The v2 envelope preserves message
+schema, source/receive timestamps, source identity, sequence, and the original
+session-time value. Legacy `live_timing_raw*.txt` recordings remain readable.
+Either format can be passed to `ReplayLiveTimingSource` for deterministic debugging.
+If a recording starts late
 or the feed omits a lap/sector time, the reducer keeps the data it has and marks
 later cumulative timing unknown after internal gaps instead of fabricating a
 continuous race clock.
+
+For Race sessions, reconnecting discovers non-empty recordings in the event
+directory, rejects files whose `SessionInfo` identifies another event, merges
+accepted captures deterministically, restores reducer/telemetry state, and then
+starts a new unused recording. Envelope recordings are merged by receive time
+without violating order within any source; only certainly adjacent duplicate
+observations are removed, so later corrections survive. Recovery temporarily
+permits an explicit `Retired: false` update to reactivate a driver while normal
+live reduction keeps retirement final.
+
+`recover_replay_directory(...)` exposes the same merge as a reusable
+`recovered_replay.jsonl` plus manifest. Source size and SHA256 identities make
+the output cacheable: unchanged sources reuse it, while any changed capture
+rebuilds it. Stop/reset cancels replay flow-control waits promptly.
 
 Incremental `TimingData` sector patches are published as soon as S1, S2, or S3
 is available; a full lap is not required. Pending sector values are retained
@@ -86,6 +149,11 @@ text, or lack of movement is deliberately not interpreted as DNF. Consequently,
 a feed that omits `Retired` will not be truncated automatically. Preserve the
 canonical recording when diagnosing lap attribution or retirement because late
 connections may not contain earlier sectors.
+
+Completed laps retain the track-status values observed during the lap,
+pit-in/pit-out markers derived from timing and stint changes, and an explicit
+validity flag. Track-status patches are accumulated across the pending lap rather
+than sampling only the finish-line state.
 
 ### Archived session replay
 

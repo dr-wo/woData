@@ -67,8 +67,6 @@ def load_replay(path: str | Path, *, permissive: bool = False) -> tuple[list[Rep
                     events.append(ReplayEvent.from_dict(value))
                 else:
                     topic, payload, timestamp = parse_recorded_line(line.strip())
-                    if not isinstance(payload, dict):
-                        raise TypeError("legacy replay payload must be an object")
                     seconds = timestamp.timestamp() if timestamp is not None else float(len(events))
                     events.append(
                         ReplayEvent(
@@ -172,7 +170,11 @@ class ReplayPlayer:
                 schema_version=event.schema_version,
                 source=REPLAY_SOURCE,
                 sequence=event.sequence,
-                session_time_seconds=event.session_time_seconds,
+                session_time_seconds=(
+                    event.message_session_time_seconds
+                    if event.preserve_message_session_time
+                    else event.session_time_seconds
+                ),
             )
             try:
                 on_message(message)

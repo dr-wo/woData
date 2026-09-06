@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import queue
 import threading
 import time
@@ -11,6 +12,13 @@ from pathlib import Path
 from .fastf1_source import FastF1LiveTimingSource
 from .models import LiveConnectionStatus, LiveSessionSnapshot, LiveTimingMessage
 from .recorder import LiveTimingRecorder, live_recording_path, unused_recording_path
+from .recovery import (
+    RecoveryReport,
+    discover_live_recordings,
+    load_recording,
+    merge_recordings,
+    validate_recording_identity,
+)
 from .reducer import LiveSessionStore
 from .replay import ReplayFaultConfig, ReplayLiveTimingSource
 
@@ -72,6 +80,7 @@ class LiveTimingController:
         self._replay_flow_control = None
         self._replay_flow_cancel = threading.Event()
         self._last_profile_log = time.monotonic()
+        self.recovery_report = RecoveryReport()
 
     def set_telemetry_sink(self, sink) -> None:
         self._telemetry_sink = sink
@@ -88,13 +97,15 @@ class LiveTimingController:
             session=config.session,
             data_root=config.data_root,
         )
+        self._recover_live_history(config, path.parent)
         path = unused_recording_path(path)
         self._recorder = LiveTimingRecorder(path)
         self.logger.info("Recording live timing to %s", path)
         self._start_source(
             FastF1LiveTimingSource(
                 timeout=config.timeout, no_auth=config.no_auth, logger=self.logger
-            )
+            ),
+            reset_store=False,
         )
 
     def start_replay(self, config: ReplayConfig) -> None:
@@ -124,10 +135,11 @@ class LiveTimingController:
             raise RuntimeError("The active source is not a replay")
         self._source.resume()
 
-    def _start_source(self, source) -> None:
+    def _start_source(self, source, *, reset_store: bool = True) -> None:
         if self.is_running:
             raise RuntimeError("A live timing source is already running")
-        self.store.reset()
+        if reset_store:
+            self.store.reset()
         self._snapshot = self.store.snapshot()
         self._messages = queue.Queue()
         self._statuses = queue.Queue()
@@ -136,6 +148,57 @@ class LiveTimingController:
         self._source = source
         self._thread = threading.Thread(target=self._run_source, daemon=True, name="wodata-live")
         self._thread.start()
+
+    def _recover_live_history(self, config: LiveConfig, directory: Path) -> None:
+        self.store.reset()
+        if str(config.session).strip().upper() not in {"R", "RACE"}:
+            self.recovery_report = RecoveryReport()
+            self._snapshot = self.store.snapshot()
+            return
+        paths = discover_live_recordings(directory)
+        accepted = []
+        rejected = []
+        input_messages = 0
+        for path in paths:
+            try:
+                messages = load_recording(path)
+                mismatch = validate_recording_identity(
+                    messages,
+                    year=config.year,
+                    round_number=config.round_number,
+                    session=config.session,
+                )
+                if mismatch:
+                    rejected.append((path, mismatch))
+                    continue
+                accepted.append(messages)
+                input_messages += len(messages)
+            except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                rejected.append((path, str(exc)))
+        merged = merge_recordings(accepted)
+        previous_reactivation = self.store.allow_retirement_reactivation
+        self.store.allow_retirement_reactivation = True
+        try:
+            for item in merged:
+                self.store._apply_message(item.message)
+                if self._telemetry_sink is not None and item.message.topic in TELEMETRY_TOPICS:
+                    self._telemetry_sink(item.message)
+        finally:
+            self.store.allow_retirement_reactivation = previous_reactivation
+        self._snapshot = self.store.snapshot()
+        self.recovery_report = RecoveryReport(
+            paths=paths,
+            accepted_paths=tuple(values[0].path for values in accepted if values),
+            rejected_paths=tuple(rejected),
+            input_messages=input_messages,
+            merged_messages=len(merged),
+        )
+        if merged:
+            self.logger.info(
+                "Recovered %d live messages from %d recording(s)",
+                len(merged),
+                len(accepted),
+            )
 
     def _run_source(self) -> None:
         try:

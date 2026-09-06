@@ -50,6 +50,10 @@ class CompletedLap:
     stint: int | None = None
     fresh_tyre: bool | None = None
     session_time_seconds: float | None = None
+    track_status: str | None = None
+    pit_out: bool = False
+    pit_in: bool = False
+    is_valid: bool = True
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,12 @@
+{
+  "schema_version": "schema_v1",
+  "description": "Versioned canonical pre-race event attributes not exposed by the FastF1 schedule.",
+  "events": {
+    "2026-12": {
+      "scheduled_race_laps": 72,
+      "source": "Formula 1 official 2026 Dutch Grand Prix timetable",
+      "source_url": "https://www.formula1.com/en/latest/article/formula-1-heineken-dutch-grand-prix-2026.VYghWPhEDqYBlWbd1iKe6",
+      "verified_at": "2026-08-23"
+    }
+  }
+}

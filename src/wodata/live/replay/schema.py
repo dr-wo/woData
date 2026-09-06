@@ -99,13 +99,15 @@ class ArchiveRecord:
 @dataclass(frozen=True)
 class ReplayEvent:
     topic: str
-    payload: dict[str, Any]
+    payload: Any
     session_time_seconds: float
     sequence: int
     schema_version: int = REPLAY_SCHEMA_VERSION
     source: str = REPLAY_SOURCE
     archive_topic_index: int | None = None
     original_timestamp: str | None = None
+    message_session_time_seconds: float | None = None
+    preserve_message_session_time: bool = False
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ReplayEvent":
@@ -114,8 +116,6 @@ class ReplayEvent:
         if missing:
             raise ValueError(f"missing replay fields: {', '.join(missing)}")
         payload = value["payload"]
-        if not isinstance(payload, dict):
-            raise TypeError("replay payload must be a dictionary")
         version = int(value.get("schema_version", REPLAY_SCHEMA_VERSION))
         if version != REPLAY_SCHEMA_VERSION:
             raise ValueError(f"unsupported replay schema version: {version}")
@@ -134,6 +134,11 @@ class ReplayEvent:
             original_timestamp=(
                 str(value["original_timestamp"]) if value.get("original_timestamp") else None
             ),
+            message_session_time_seconds=(
+                session_time_seconds(value["message_session_time_seconds"])
+                if value.get("message_session_time_seconds") is not None else None
+            ),
+            preserve_message_session_time=bool(value.get("preserve_message_session_time", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -149,4 +154,8 @@ class ReplayEvent:
             result["archive_topic_index"] = self.archive_topic_index
         if self.original_timestamp is not None:
             result["original_timestamp"] = self.original_timestamp
+        if self.message_session_time_seconds is not None:
+            result["message_session_time_seconds"] = self.message_session_time_seconds
+        if self.preserve_message_session_time:
+            result["preserve_message_session_time"] = True
         return result

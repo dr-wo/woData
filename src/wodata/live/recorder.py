@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from threading import Lock
+import json
 
 from wodata import get_cache_path
 
@@ -22,7 +23,7 @@ def live_recording_path(
         year=year,
         round_number=round_number,
         session=session,
-        filename="live_timing_raw.txt",
+        filename="live_timing_raw.jsonl",
         data_root=data_root,
     )
 
@@ -44,7 +45,28 @@ class LiveTimingRecorder:
             if self._file is None:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 self._file = self.path.open(self.filemode, encoding="utf-8")
-            self._file.write(str([message.topic, message.payload, timestamp]) + "\n")
+            if self.path.suffix.lower() == ".jsonl":
+                received = message.received_at_utc.isoformat().replace("+00:00", "Z")
+                self._file.write(
+                    json.dumps(
+                        {
+                            "recording_schema_version": 2,
+                            "message_schema_version": message.schema_version,
+                            "topic": message.topic,
+                            "payload": message.payload,
+                            "source_timestamp_utc": timestamp or None,
+                            "received_at_utc": received,
+                            "source": message.source,
+                            "sequence": message.sequence,
+                            "session_time_seconds": message.session_time_seconds,
+                        },
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+            else:
+                self._file.write(str([message.topic, message.payload, timestamp]) + "\n")
             self._file.flush()
 
     def close(self) -> None:

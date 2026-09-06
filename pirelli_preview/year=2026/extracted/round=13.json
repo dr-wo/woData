@@ -1,0 +1,20 @@
+{
+  "asphalt_abrasion": 2,
+  "asphalt_grip": 3,
+  "circuit": "Autodromo Nazionale Monza",
+  "event": "Italian Grand Prix",
+  "extraction_model": "codex-vision-manual-v1",
+  "extraction_timestamp": "2026-09-05T21:39:57.098536+00:00",
+  "hard_compound": "C3",
+  "lateral": 2,
+  "medium_compound": "C4",
+  "review_status": "accepted",
+  "round": 13,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "soft_compound": "C5",
+  "source_file": "1920_13-it26-preview-en.jpg",
+  "source_hash": "433a7dd73b58e5f7451df5b1b25c6e1787d6bd6ff01fc8352a1f6e92874fc964",
+  "traction": 3,
+  "tyre_stress": 3
+}

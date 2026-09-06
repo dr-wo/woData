@@ -5,6 +5,7 @@ import base64
 import math
 import json
 import zlib
+from collections import deque
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Mapping
@@ -96,20 +97,30 @@ def _is_older(candidate: datetime | None, current: datetime | None) -> bool:
     return candidate is not None and current is not None and candidate < current
 
 
+def _combined_track_status(statuses: set[str]) -> str | None:
+    values = sorted({str(value).strip() for value in statuses if str(value).strip()})
+    if not values:
+        return None
+    return "".join(values)
+
+
 class LiveSessionStore:
     def __init__(
         self,
         *,
         telemetry_lap_window: int | None = 12,
         position_sample_limit: int | None = None,
+        allow_retirement_reactivation: bool = False,
     ) -> None:
         self.telemetry_lap_window = telemetry_lap_window
         self.position_sample_limit = position_sample_limit
+        self.allow_retirement_reactivation = bool(allow_retirement_reactivation)
         self.reset()
 
     def reset(self) -> None:
         self._session_info: dict[str, object] = {}
         self._session_status: str | None = None
+        self._current_track_status: str | None = None
         self._scheduled_total_laps: int | None = None
         self._drivers: dict[str, dict] = {}
         self._timing: dict[str, dict] = {}
@@ -118,8 +129,8 @@ class LiveSessionStore:
         self._laps: dict[str, dict[int, dict]] = {}
         self._retired_after_lap: dict[str, int] = {}
         self._pending: dict[str, dict] = {}
-        self._telemetry_samples: dict[str, list[LiveTelemetrySample]] = {}
-        self._position_samples: dict[str, list[LivePositionSample]] = {}
+        self._telemetry_samples: dict[str, deque[LiveTelemetrySample]] = {}
+        self._position_samples: dict[str, deque[LivePositionSample]] = {}
         self._last_message_at: datetime | None = None
         self._sequence = 0
         self.duplicate_completed_lap_count = 0
@@ -127,13 +138,17 @@ class LiveSessionStore:
         self.invalid_lap_time_count = 0
 
     def apply(self, message: LiveTimingMessage) -> LiveSessionSnapshot:
-        self._apply_message(message)
+        self.reduce(message)
         return self.snapshot()
 
     def apply_many(self, messages: list[LiveTimingMessage]) -> LiveSessionSnapshot:
         for message in messages:
-            self._apply_message(message)
+            self.reduce(message)
         return self.snapshot()
+
+    def reduce(self, message: LiveTimingMessage) -> None:
+        """Apply one message without materialising a potentially large snapshot."""
+        self._apply_message(message)
 
     def _apply_message(self, message: LiveTimingMessage) -> None:
         self._sequence += 1
@@ -153,6 +168,12 @@ class LiveSessionStore:
                 and total_laps > 0
             ):
                 self._scheduled_total_laps = total_laps
+        elif message.topic == "TrackStatus" and isinstance(payload, Mapping):
+            status = payload.get("Status")
+            if status is not None:
+                self._current_track_status = str(status)
+                for pending in self._pending.values():
+                    pending.setdefault("track_statuses", set()).add(str(status))
         elif message.topic == "DriverList" and isinstance(payload, Mapping):
             self._apply_driver_list(payload, message.source_timestamp_utc)
         elif message.topic == "TimingData" and isinstance(payload, Mapping):
@@ -189,7 +210,7 @@ class LiveSessionStore:
                     continue
                 number = str(number)
                 current_lap = max(self._laps.get(number, {}), default=0) + 1
-                samples = self._telemetry_samples.setdefault(number, [])
+                samples = self._telemetry_samples.setdefault(number, deque())
                 samples.append(
                     LiveTelemetrySample(
                         number,
@@ -223,27 +244,26 @@ class LiveSessionStore:
                     continue
                 status = position.get("Status")
                 on_track = None if status is None else str(status).lower() in {"ontrack", "0"}
-                self._position_samples.setdefault(str(number), []).append(
+                latest = self._position_samples.setdefault(str(number), deque())
+                latest.append(
                     LivePositionSample(str(number), sample_time, x, y, z, on_track)
                 )
-                latest = self._position_samples[str(number)]
                 if self.position_sample_limit is not None:
                     limit = max(int(self.position_sample_limit), 1)
-                    self._position_samples[str(number)] = latest[-limit:]
+                    while len(latest) > limit:
+                        latest.popleft()
                 else:
                     cutoff = sample_time - 1200.0
-                    self._position_samples[str(number)] = [
-                        item for item in latest if item.session_time_seconds >= cutoff
-                    ]
+                    while latest and latest[0].session_time_seconds < cutoff:
+                        latest.popleft()
 
     def _trim_telemetry(self, number: str, current_lap: int) -> None:
         if self.telemetry_lap_window is None:
             return
         minimum_lap = max(current_lap - int(self.telemetry_lap_window), 1)
-        self._telemetry_samples[number] = [
-            sample for sample in self._telemetry_samples[number]
-            if sample.lap_number >= minimum_lap
-        ]
+        samples = self._telemetry_samples[number]
+        while samples and samples[0].lap_number < minimum_lap:
+            samples.popleft()
 
     def _apply_driver_list(self, payload: Mapping, timestamp: datetime | None) -> None:
         lines = payload.get("Lines", payload)
@@ -281,6 +301,12 @@ class LiveSessionStore:
                 )
                 if completed_lap > 0:
                     self._retired_after_lap.setdefault(number, completed_lap)
+            elif (
+                self.allow_retirement_reactivation
+                and "Retired" in patch
+                and _as_bool(patch.get("Retired")) is False
+            ):
+                self._retired_after_lap.pop(number, None)
             self._update_pending_lap(number, patch, timestamp, session_time_seconds)
 
     def _apply_timing_app_data(self, payload: Mapping, timestamp: datetime | None) -> None:
@@ -309,6 +335,8 @@ class LiveSessionStore:
                         "fitted_lap": completed_lap + 1,
                         "timestamp": timestamp,
                     }
+                    if parsed_index > 0 and completed_lap in self._laps.get(number, {}):
+                        self._laps[number][completed_lap]["pit_in"] = True
                 _deep_merge(driver_stints[parsed_index], patch)
 
     def _tyre_assignment(self, number: str, lap: int) -> dict[str, object]:
@@ -332,6 +360,7 @@ class LiveSessionStore:
             "tyre_life": float(start_laps + completed_on_stint + 1),
             "stint": stint_number,
             "fresh_tyre": _as_bool(data.get("New")),
+            "pit_out": bool(stint_index > 0 and int(data.get("fitted_lap", 1)) == lap),
         }
 
     def _update_pending_lap(
@@ -358,6 +387,9 @@ class LiveSessionStore:
                 "sectors_session_time_seconds": None,
                 "session_time_seconds": None,
                 "committed_seq": 0,
+                "track_statuses": (
+                    {self._current_track_status} if self._current_track_status else set()
+                ),
             },
         )
         if "NumberOfLaps" in patch and not _is_older(timestamp, pending["lap_timestamp"]):
@@ -437,6 +469,8 @@ class LiveSessionStore:
                 default=None,
             ),
             "session_time_seconds": session_time_seconds,
+            "track_status": _combined_track_status(pending.get("track_statuses", set())),
+            "pit_in": _as_bool(self._timing.get(number, {}).get("InPit")) is True,
             **self._tyre_assignment(number, lap),
         }
         self._recompute_cumulative(number, lap)
@@ -449,6 +483,9 @@ class LiveSessionStore:
         pending["sectors_seq"] = 0
         pending["sectors_timestamp"] = None
         pending["sectors_session_time_seconds"] = None
+        pending["track_statuses"] = (
+            {self._current_track_status} if self._current_track_status else set()
+        )
 
     def _recompute_cumulative(self, number: str, start_lap: int) -> None:
         driver_laps = self._laps[number]
@@ -520,6 +557,10 @@ class LiveSessionStore:
                         data.get("stint"),
                         data.get("fresh_tyre"),
                         data.get("session_time_seconds"),
+                        data.get("track_status"),
+                        bool(data.get("pit_out", False)),
+                        bool(data.get("pit_in", False)),
+                        True,
                     )
                 )
                 sector_times = data.get("sector_times_s")

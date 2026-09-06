@@ -35,6 +35,13 @@ __all__ = [
     "get_driver_colour",
     "get_team_color",
     "get_team_colour",
+    "WeekendArtifactReference",
+    "WeekendRun",
+    "WeekendRunStore",
+    "EventMetadata",
+    "parse_event_id",
+    "resolve_event",
+    "resolve_race_distance",
 ]
 
 
@@ -151,3 +158,17 @@ def get_race_performance_review_range_dir(
         / f"range={range_label}"
         / f"session={str(session).upper()}"
     )
+
+
+# Imported after path helpers to avoid a module-initialisation cycle.
+from wodata.weekend_runs import (  # noqa: E402
+    WeekendArtifactReference,
+    WeekendRun,
+    WeekendRunStore,
+)
+from wodata.events import (  # noqa: E402
+    EventMetadata,
+    parse_event_id,
+    resolve_event,
+    resolve_race_distance,
+)
