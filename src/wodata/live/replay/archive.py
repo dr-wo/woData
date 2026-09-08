@@ -16,7 +16,12 @@ REQUIRED_TOPICS = (
     "SessionInfo", "DriverList", "SessionStatus", "LapCount", "TimingData",
     "TimingAppData", "TrackStatus",
 )
-OPTIONAL_TOPICS = ("WeatherData", "RaceControlMessages", "Heartbeat")
+OPTIONAL_TOPICS = (
+    "ExtrapolatedClock",
+    "WeatherData",
+    "RaceControlMessages",
+    "Heartbeat",
+)
 TELEMETRY_TOPICS = ("CarData.z", "Position.z")
 LARGE_TOPICS = frozenset(("CarData.z", "Position.z", "TeamRadio", "TimingStats"))
 
@@ -24,6 +29,7 @@ _FASTF1_PAGE_NAMES = {
     "SessionInfo": "session_info",
     "DriverList": "driver_list",
     "SessionStatus": "session_status",
+    "ExtrapolatedClock": "extrapolated_clock",
     "LapCount": "lap_count",
     "TimingData": "timing_data",
     "TimingAppData": "timing_app_data",

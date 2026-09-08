@@ -13,6 +13,7 @@ from wodata.live.replay import (
     ArchiveRecord,
     ArchiveSession,
     FastF1ArchiveClient,
+    OPTIONAL_TOPICS,
     ReplayFaultConfig,
     ReplayPlayer,
     build_replay,
@@ -20,6 +21,10 @@ from wodata.live.replay import (
     merge_records,
     session_time_seconds,
 )
+
+
+def test_default_archive_topics_include_qualifying_clock():
+    assert "ExtrapolatedClock" in OPTIONAL_TOPICS
 
 
 class FakeArchiveClient:

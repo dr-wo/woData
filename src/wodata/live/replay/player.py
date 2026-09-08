@@ -14,7 +14,7 @@ from typing import Literal
 
 from ..models import LiveConnectionStatus, LiveTimingMessage
 from .faults import FaultStats, ReplayFaultConfig, apply_faults
-from .schema import REPLAY_SOURCE, ReplayEvent, parse_timestamp
+from .schema import REPLAY_SOURCE, ReplayEvent, parse_timestamp, session_time_seconds
 
 
 class ReplayConsumerError(RuntimeError):
@@ -55,6 +55,7 @@ def load_replay(path: str | Path, *, permissive: bool = False) -> tuple[list[Rep
     events: list[ReplayEvent] = []
     invalid = 0
     is_jsonl = path.suffix.lower() == ".jsonl"
+    recording_origin: datetime | None = None
     with path.open(encoding="utf-8") as source:
         for line_number, line in enumerate(source, 1):
             if not line.strip():
@@ -64,7 +65,45 @@ def load_replay(path: str | Path, *, permissive: bool = False) -> tuple[list[Rep
                     value = json.loads(line)
                     if not isinstance(value, dict):
                         raise TypeError("JSONL record must be an object")
-                    events.append(ReplayEvent.from_dict(value))
+                    if int(value.get("recording_schema_version", 0)) == 2:
+                        received_at = parse_timestamp(value.get("received_at_utc"))
+                        source_at = parse_timestamp(value.get("source_timestamp_utc"))
+                        clock = received_at or source_at
+                        if recording_origin is None and clock is not None:
+                            recording_origin = clock
+                        recorded_session_time = value.get("session_time_seconds")
+                        timeline_seconds = (
+                            session_time_seconds(recorded_session_time)
+                            if recorded_session_time is not None
+                            else (
+                                max(0.0, (clock - recording_origin).total_seconds())
+                                if clock is not None and recording_origin is not None
+                                else float(len(events))
+                            )
+                        )
+                        events.append(
+                            ReplayEvent(
+                                topic=str(value.get("topic") or ""),
+                                payload=value.get("payload"),
+                                session_time_seconds=timeline_seconds,
+                                sequence=int(value.get("sequence", len(events) + 1)),
+                                schema_version=int(value.get("message_schema_version", 1)),
+                                source=str(value.get("source") or REPLAY_SOURCE),
+                                original_timestamp=(
+                                    str(value["source_timestamp_utc"])
+                                    if value.get("source_timestamp_utc")
+                                    else None
+                                ),
+                                message_session_time_seconds=(
+                                    session_time_seconds(recorded_session_time)
+                                    if recorded_session_time is not None
+                                    else None
+                                ),
+                                preserve_message_session_time=True,
+                            )
+                        )
+                    else:
+                        events.append(ReplayEvent.from_dict(value))
                 else:
                     topic, payload, timestamp = parse_recorded_line(line.strip())
                     seconds = timestamp.timestamp() if timestamp is not None else float(len(events))

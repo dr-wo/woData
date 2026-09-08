@@ -153,6 +153,21 @@ def test_running_clock_counts_down_between_feed_updates(monkeypatch):
     assert store.snapshot().remaining_time_s == 893
 
 
+def test_accelerated_replay_clock_counts_down_by_session_time():
+    store = QualiSessionStore()
+    store.apply(
+        msg(
+            "ExtrapolatedClock",
+            {"Remaining": "15:00", "Extrapolating": True},
+            seconds=100,
+        )
+    )
+
+    snapshot = store.apply(msg("Heartbeat", {}, seconds=107.9))
+
+    assert snapshot.remaining_time_s == 893
+
+
 def test_clock_reset_uses_extrapolated_zero_to_advance_part(monkeypatch):
     now = [100.0]
     monkeypatch.setattr("wodata.live.quali_reducer.time.monotonic", lambda: now[0])

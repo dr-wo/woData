@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from wodata.live import LiveSessionStore, ReplayLiveTimingSource
+from wodata.live.replay.player import load_replay
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "live_phase_1.txt"
@@ -28,3 +29,25 @@ def test_malformed_line_warns_without_crashing(tmp_path):
     source.run(messages.append, lambda _status: None)
     assert source.invalid_record_count == 1
     assert len(messages) == 1
+
+
+def test_jsonl_live_recording_without_session_clock_replays_by_receive_time(tmp_path):
+    path = tmp_path / "live_timing_raw.jsonl"
+    path.write_text(
+        '{"recording_schema_version":2,"message_schema_version":1,'
+        '"topic":"SessionStatus","payload":{"Status":"Started"},'
+        '"source_timestamp_utc":null,"received_at_utc":"2026-09-06T13:00:00Z",'
+        '"source":"signalr_live","sequence":1,"session_time_seconds":null}\n'
+        '{"recording_schema_version":2,"message_schema_version":1,'
+        '"topic":"SessionStatus","payload":{"Status":"Finished"},'
+        '"source_timestamp_utc":null,"received_at_utc":"2026-09-06T13:00:02.5Z",'
+        '"source":"signalr_live","sequence":2,"session_time_seconds":null}\n',
+        encoding="utf-8",
+    )
+
+    events, invalid = load_replay(path)
+
+    assert invalid == 0
+    assert [event.session_time_seconds for event in events] == [0.0, 2.5]
+    assert [event.message_session_time_seconds for event in events] == [None, None]
+    assert all(event.preserve_message_session_time for event in events)

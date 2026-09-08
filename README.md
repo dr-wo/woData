@@ -1,29 +1,51 @@
 # woData
 
-Shared data-root and cache-path helpers for the dr-wo Formula 1 analysis tools.
+`woData` is the reproducible data layer for the dr-wo Formula 1 strategy
+ecosystem. It resolves event identity, ingests live timing, records canonical raw
+messages before reduction, reconstructs timing/tyre/telemetry state, builds
+deterministic archive replays, and owns the versioned contracts and provenance
+used by `woPlanner`, `woStrategy` and `woWeekend`.
 
-## Team and driver colours
+All inputs are public F1 data. Missing timing or metadata remains unknown rather
+than being replaced with a convenient estimate.
 
-`wodata.colours` is the shared source of truth for team and driver plotting
-colours across the dr-wo packages. The current values come from the 2026
-FastF1 live-timing `DriverList` `TeamColour` field. FastF1 assigns each driver
-their team's colour, so the driver map is derived from the same team palette.
+## Data flow
 
-```python
-from wodata.colours import get_driver_colour, get_team_colour
-
-assert get_team_colour("McLaren") == "#F47600"
-assert get_driver_colour("NOR") == "#F47600"
+```mermaid
+flowchart LR
+    A[F1 live timing / archive]
+    B[Canonical raw recording<br/>before reduction]
+    C[Shared reducers / normalized state]
+    D[Timing, tyre and telemetry state]
+    E[Deterministic replay<br/>versioned artifacts + provenance]
+    F[woPlanner]
+    G[woStrategy]
+    H[woWeekend]
+    A --> B --> C --> D --> E
+    E --> F
+    E --> G
+    E --> H
 ```
 
-Both British (`TEAM_COLOURS`, `DRIVER_COLOURS`) and American
-(`TEAM_COLORS`, `DRIVER_COLORS`) spellings are exported. `F1_TEAM_COLORS`
-also includes legacy aliases used by historic data and existing plots.
+The same message contracts and reducers are used for live timing and archive
+replay where applicable. High-volume telemetry can cross a worker boundary for
+performance, but it is still recorded first. Immutable workflow artifacts carry
+hashes and explicit references; a missing source remains a failure instead of
+silently selecting a newer cache.
 
-When a new season changes teams, drivers, or colours, update
-`src/wodata/colours.py` from a complete FastF1 `DriverList` and update
-`tests/test_colours.py`. Consumer packages should import the shared mappings
-instead of defining local palettes.
+## What to inspect
+
+- [`src/wodata/live/recorder.py`](src/wodata/live/recorder.py) and
+  [`src/wodata/live/replay/`](src/wodata/live/replay/) — raw-first recording,
+  archive construction, playback and fault injection.
+- [`src/wodata/live/reducer.py`](src/wodata/live/reducer.py) — source-neutral
+  timing, tyre and telemetry state reduction.
+- [`src/wodata/contracts.py`](src/wodata/contracts.py) and
+  [`src/wodata/artifacts.py`](src/wodata/artifacts.py) — shared schemas,
+  deterministic hashes and versioned outputs.
+- [`src/wodata/events.py`](src/wodata/events.py) and
+  [`src/wodata/weekend_runs.py`](src/wodata/weekend_runs.py) — canonical event
+  metadata and immutable weekend-run storage.
 
 ## Event identity and race distance
 
@@ -184,8 +206,9 @@ python -m wodata.live.replay.cli play merged_replay_v1.jsonl --speed 0 \
 ```
 
 For equal timestamps the builder orders `SessionInfo`, `DriverList`,
-`SessionStatus`, `TrackStatus`, `LapCount`, `TimingAppData`, `TimingData`, race
-control, weather, then heartbeat, preserving original order within each topic.
+`SessionStatus`, `ExtrapolatedClock`, `TrackStatus`, `LapCount`, `TimingAppData`,
+`TimingData`, race control, weather, then heartbeat, preserving original order
+within each topic.
 This is stable and reproducible, but it approximates cross-topic ordering because
 the archive cannot recover the original SignalR network arrival order.
 
@@ -286,7 +309,7 @@ directory automatically.
 
 The downstream interpretation of these descriptors, including the ordinal 1-5 endpoint
 compromise and the cross-event model's complete assumptions, is documented in
-[`../woStrategy/doc/CROSS_EVENT_TYRE_PREDICTION_V1.md`](../woStrategy/doc/CROSS_EVENT_TYRE_PREDICTION_V1.md).
+[`woStrategy/doc/CROSS_EVENT_TYRE_PREDICTION_V1.md`](https://github.com/dr-wo/woStrategy/blob/main/doc/CROSS_EVENT_TYRE_PREDICTION_V1.md).
 
 Pirelli preview images and validated extraction artifacts use:
 
@@ -302,3 +325,32 @@ as per-event JSON; the annual CSV is rebuilt deterministically and is never edit
 by the vision model. Missing or ambiguous values remain null and require manual
 review. `traction` and `lateral` are retained as raw descriptors but are not V1
 tyre-prediction features.
+
+## Team and driver colours
+
+`wodata.colours` is the shared source of truth for team and driver plotting
+colours across the dr-wo packages. The current values come from the 2026
+FastF1 live-timing `DriverList` `TeamColour` field. FastF1 assigns each driver
+their team's colour, so the driver map is derived from the same team palette.
+
+```python
+from wodata.colours import get_driver_colour, get_team_colour
+
+assert get_team_colour("McLaren") == "#F47600"
+assert get_driver_colour("NOR") == "#F47600"
+```
+
+Both British (`TEAM_COLOURS`, `DRIVER_COLOURS`) and American
+(`TEAM_COLORS`, `DRIVER_COLORS`) spellings are exported. `F1_TEAM_COLORS`
+also includes legacy aliases used by historic data and existing plots.
+
+When a new season changes teams, drivers, or colours, update
+`src/wodata/colours.py` from a complete FastF1 `DriverList` and update
+`tests/test_colours.py`. Consumer packages should import the shared mappings
+instead of defining local palettes.
+
+## Development context
+
+This project is developed extensively with coding agents. Durable context in the
+code, tests and adjacent package documentation preserves interfaces, assumptions,
+known compromises and validation requirements across development sessions.

@@ -78,6 +78,7 @@ class QualiSessionStore:
         self._remaining_time_s: float | None = None
         self._clock_running = False
         self._clock_anchor_monotonic_s: float | None = None
+        self._clock_anchor_session_time_s: float | None = None
         self._drivers: dict[str, dict] = {}
         self._timing: dict[str, dict] = {}
         self._tyre_stints: dict[str, dict[int, dict]] = {}
@@ -145,6 +146,7 @@ class QualiSessionStore:
                 self._infer_session_part_from_clock_duration(declared_remaining)
                 self._remaining_time_s = remaining
                 self._clock_anchor_monotonic_s = time.monotonic()
+                self._clock_anchor_session_time_s = candidate_time
             if payload.get("Extrapolating") is not None:
                 self._clock_running = bool(_as_bool(payload.get("Extrapolating")))
         elif message.topic == "DriverList" and isinstance(payload, Mapping):
@@ -379,9 +381,14 @@ class QualiSessionStore:
             or self._clock_anchor_monotonic_s is None
         ):
             return remaining
-        elapsed_s = max(
-            0, math.floor(time.monotonic() - self._clock_anchor_monotonic_s)
+        elapsed_monotonic_s = time.monotonic() - self._clock_anchor_monotonic_s
+        elapsed_session_s = (
+            self._latest_session_time_s - self._clock_anchor_session_time_s
+            if self._latest_session_time_s is not None
+            and self._clock_anchor_session_time_s is not None
+            else 0.0
         )
+        elapsed_s = max(0, math.floor(max(elapsed_monotonic_s, elapsed_session_s)))
         return max(0.0, remaining - elapsed_s)
 
     def _freeze_clock(self) -> None:
@@ -389,6 +396,7 @@ class QualiSessionStore:
         if effective is not None:
             self._remaining_time_s = effective
         self._clock_anchor_monotonic_s = time.monotonic()
+        self._clock_anchor_session_time_s = self._latest_session_time_s
 
     def _infer_session_part_from_clock_duration(self, remaining: float) -> None:
         session_text = " ".join(
