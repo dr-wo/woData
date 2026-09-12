@@ -33,11 +33,11 @@ def position(x, y, seconds, status="OnTrack"):
 def test_fresh_rpm_in_garage_and_stale_rpm():
     store = QualiSessionStore(telemetry_freshness_s=5)
     store.apply(msg("DriverList", {"1": {"Tla": "AAA"}})); store.apply(timing())
-    assert store.apply(car(2000, 10)).drivers[0].pit_state == QualiPitState.FIRED_UP
+    assert store.apply(car(2000, 10)).drivers[0].pit_state == QualiPitState.FIRE_UP
     # Another driver's newer sample advances freshness time; old non-zero RPM becomes stale.
     store.apply(msg("CarData.z", {"Entries": [{"Cars": {"2": {"Channels": {"0": 1000}}}}]}, 20))
     states = {d.driver_number: d for d in store.snapshot().drivers}
-    assert states["1"].pit_state == QualiPitState.INACTIVE
+    assert states["1"].pit_state == QualiPitState.NOT_ACTIVE
 
 
 def test_pit_lane_queue_physical_order_then_pit_exit_on_track():
@@ -50,12 +50,12 @@ def test_pit_lane_queue_physical_order_then_pit_exit_on_track():
         "2": {"X": 80, "Y": 20, "Z": 0, "Status": "OnTrack"},
     }}]}, 5))
     states = {d.driver_code: d for d in store.snapshot().drivers}
-    assert states["AAA"].pit_state == states["BBB"].pit_state == QualiPitState.QUEUE
+    assert states["AAA"].pit_state == states["BBB"].pit_state == QualiPitState.NOT_ACTIVE
     assert states["BBB"].pit_lane_progress > states["AAA"].pit_lane_progress
     # TimingData can report on-track before the car physically leaves pit lane.
     snapshot = store.apply(msg("TimingData", {"Lines": {"2": {"InPit": "false"}}}))
     bbb = next(d for d in snapshot.drivers if d.driver_code == "BBB")
-    assert bbb.pit_state == QualiPitState.QUEUE
+    assert bbb.pit_state == QualiPitState.PIT_LANE
     snapshot = store.apply(
         msg(
             "Position.z",
@@ -74,15 +74,15 @@ def test_speed_fallback_latches_queue_until_car_has_left_pit_lane():
     store.apply(msg("DriverList", {"1": {"Tla": "AAA"}}))
     store.apply(timing(in_pit=True))
     assert store.apply(car(2000, 1, speed=0)).drivers[0].pit_state == (
-        QualiPitState.FIRED_UP
+        QualiPitState.FIRE_UP
     )
     assert store.apply(car(3000, 2, speed=20)).drivers[0].pit_state == (
-        QualiPitState.QUEUE
+        QualiPitState.PIT_LANE
     )
 
     store.apply(timing(in_pit=False))
     assert store.apply(car(4000, 3, speed=60)).drivers[0].pit_state == (
-        QualiPitState.QUEUE
+        QualiPitState.PIT_LANE
     )
     assert store.apply(car(8000, 4, speed=120)).drivers[0].pit_state == (
         QualiPitState.ON_TRACK
@@ -100,7 +100,7 @@ def test_inbound_car_transitions_from_inlap_to_in_pit():
     assert snapshot.drivers[0].pit_state == QualiPitState.IN_LAP
 
     snapshot = store.apply(position(50, 0, 2))
-    assert snapshot.drivers[0].pit_state == QualiPitState.IN_PIT
+    assert snapshot.drivers[0].pit_state == QualiPitState.PIT_LANE
 
 
 def test_timing_app_data_uses_real_tyre_age_at_stint_start():
@@ -140,9 +140,9 @@ def test_clock_sectors_segments_and_best_lap_reduction():
     assert snapshot.drivers[0].sectors_s == (30, 31, 29)
 
 
-def test_running_clock_counts_down_between_feed_updates(monkeypatch):
+def test_running_domain_clock_only_advances_on_messages(monkeypatch):
     now = [100.0]
-    monkeypatch.setattr("wodata.live.quali_reducer.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("time.monotonic", lambda: now[0])
     store = QualiSessionStore()
     store.apply(
         msg("ExtrapolatedClock", {"Remaining": "15:00", "Extrapolating": True})
@@ -150,7 +150,8 @@ def test_running_clock_counts_down_between_feed_updates(monkeypatch):
 
     now[0] += 7.9
 
-    assert store.snapshot().remaining_time_s == 893
+    assert store.snapshot().remaining_time_s == 900
+    assert store.apply(msg("Heartbeat", {}, seconds=7.9)).remaining_time_s == 893
 
 
 def test_accelerated_replay_clock_counts_down_by_session_time():
@@ -170,26 +171,27 @@ def test_accelerated_replay_clock_counts_down_by_session_time():
 
 def test_clock_reset_uses_extrapolated_zero_to_advance_part(monkeypatch):
     now = [100.0]
-    monkeypatch.setattr("wodata.live.quali_reducer.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("time.monotonic", lambda: now[0])
     store = QualiSessionStore()
     store.apply(
         msg("ExtrapolatedClock", {"Remaining": "0:05", "Extrapolating": True})
     )
     now[0] += 6
+    store.apply(msg("Heartbeat", {}, seconds=6))
 
     snapshot = store.apply(msg("ExtrapolatedClock", {"Remaining": "15:00"}))
 
     assert snapshot.session_part == "Q2"
 
 
-def test_late_live_connection_recovers_q2_and_clock_anchor():
+def test_late_live_connection_at_15_minutes_stays_in_q1():
     store = QualiSessionStore()
     store.apply(msg("SessionInfo", {"Name": "Qualifying", "Type": "Qualifying"}))
     snapshot = store.apply(
         LiveTimingMessage(
             "ExtrapolatedClock",
             {
-                "Utc": "2025-12-31T23:58:00Z",
+                    "Utc": "2026-01-01T00:00:00Z",
                 "Remaining": "15:00",
                 "Extrapolating": True,
             },
@@ -198,13 +200,21 @@ def test_late_live_connection_recovers_q2_and_clock_anchor():
         )
     )
 
+    assert snapshot.session_part == "Q1"
+    assert snapshot.remaining_time_s == 15 * 60
+
+
+def test_late_q2_connection_requires_explicit_feed_part():
+    store = QualiSessionStore()
+    store.apply(msg("SessionInfo", {"Name": "Q2", "SessionPart": "Q2"}))
+    snapshot = store.apply(msg("ExtrapolatedClock", {"Remaining": "15:00", "Extrapolating": True}))
     assert snapshot.session_part == "Q2"
-    assert snapshot.remaining_time_s == 13 * 60
 
 
 def test_clock_reset_advances_qualifying_part():
     store = QualiSessionStore()
-    store.apply(msg("ExtrapolatedClock", {"Remaining": "0:03"}))
+    store.apply(msg("ExtrapolatedClock", {"Remaining": "0:03", "Extrapolating": True}))
+    store.apply(msg("Heartbeat", {}, seconds=4))
     snapshot = store.apply(msg("ExtrapolatedClock", {"Remaining": "15:00"}))
     assert snapshot.session_part == "Q2"
 
@@ -216,6 +226,7 @@ def test_sprint_qualifying_metadata_and_clock_reset_use_sq_parts():
     )
     assert snapshot.session_part == "SQ1"
 
-    store.apply(msg("ExtrapolatedClock", {"Remaining": "0:03"}))
+    store.apply(msg("ExtrapolatedClock", {"Remaining": "0:03", "Extrapolating": True}))
+    store.apply(msg("Heartbeat", {}, seconds=4))
     snapshot = store.apply(msg("ExtrapolatedClock", {"Remaining": "10:00"}))
     assert snapshot.session_part == "SQ2"

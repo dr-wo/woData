@@ -62,9 +62,9 @@ def test_replay_flow_control_is_never_applied_to_live_ingress():
     assert len(calls) == 13
 
 
-def test_controller_refreshes_extrapolated_clock_without_new_messages(monkeypatch):
+def test_controller_reads_do_not_advance_domain_clock_without_messages(monkeypatch):
     now = [100.0]
-    monkeypatch.setattr("wodata.live.quali_reducer.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("time.monotonic", lambda: now[0])
     controller = LiveTimingController(store=QualiSessionStore())
     timestamp = datetime.now(timezone.utc)
     controller._enqueue_message(
@@ -81,7 +81,7 @@ def test_controller_refreshes_extrapolated_clock_without_new_messages(monkeypatc
     result = controller.drain()
 
     assert result.messages_processed == 0
-    assert result.snapshot.remaining_time_s == 58
+    assert result.snapshot.remaining_time_s == 60
     controller.stop()
 
 

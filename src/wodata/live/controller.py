@@ -11,7 +11,8 @@ from pathlib import Path
 
 from .fastf1_source import FastF1LiveTimingSource
 from .models import LiveConnectionStatus, LiveSessionSnapshot, LiveTimingMessage
-from .recorder import LiveTimingRecorder, live_recording_path, unused_recording_path
+from .recorder import LiveTimingRecorder, FeedIdentityRecorder, live_recording_path, unused_recording_path
+from .quali_reducer import QualiSessionStore
 from .recovery import (
     RecoveryReport,
     discover_live_recordings,
@@ -81,6 +82,7 @@ class LiveTimingController:
         self._replay_flow_cancel = threading.Event()
         self._last_profile_log = time.monotonic()
         self.recovery_report = RecoveryReport()
+        self.on_message_snapshot = None
 
     def set_telemetry_sink(self, sink) -> None:
         self._telemetry_sink = sink
@@ -99,11 +101,17 @@ class LiveTimingController:
         )
         self._recover_live_history(config, path.parent)
         path = unused_recording_path(path)
-        self._recorder = LiveTimingRecorder(path)
+        self._recorder = (
+            FeedIdentityRecorder(year=config.year, round_number=config.round_number,
+                                 session=config.session, data_root=config.data_root,
+                                 logger=self.logger)
+            if isinstance(self.store, QualiSessionStore) else LiveTimingRecorder(path)
+        )
         self.logger.info("Recording live timing to %s", path)
         self._start_source(
             FastF1LiveTimingSource(
-                timeout=config.timeout, no_auth=config.no_auth, logger=self.logger
+                timeout=config.timeout, no_auth=config.no_auth, logger=self.logger,
+                extra_topics=("RaceControlMessages",) if isinstance(self.store, QualiSessionStore) else (),
             ),
             reset_store=False,
         )
@@ -151,7 +159,7 @@ class LiveTimingController:
 
     def _recover_live_history(self, config: LiveConfig, directory: Path) -> None:
         self.store.reset()
-        if str(config.session).strip().upper() not in {"R", "RACE"}:
+        if isinstance(self.store, QualiSessionStore) or str(config.session).strip().upper() not in {"R", "RACE"}:
             self.recovery_report = RecoveryReport()
             self._snapshot = self.store.snapshot()
             return
@@ -239,6 +247,8 @@ class LiveTimingController:
             reducer_started = time.perf_counter()
             for message in messages:
                 self.store._apply_message(message)
+                if self.on_message_snapshot is not None:
+                    self.on_message_snapshot(self.store.snapshot())
             reducer_seconds = time.perf_counter() - reducer_started
         else:
             reducer_seconds = 0.0

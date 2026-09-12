@@ -9,6 +9,9 @@ from typing import Mapping
 
 class QualiPitState(str, Enum):
     UNKNOWN = "UNKNOWN"
+    NOT_ACTIVE = "NOT ACTIVE"
+    FIRE_UP = "FIRE-UP"
+    PIT_LANE = "PIT-LANE"
     INACTIVE = "INACTIVE"
     FIRED_UP = "FIRED_UP"
     QUEUE = "QUEUE"
@@ -52,6 +55,32 @@ class QualiRawDriverState:
     latest_telemetry_time_s: float | None = None
     latest_position_time_s: float | None = None
     tyre_history: tuple[QualiTyreStint, ...] = ()
+    historical_results: tuple[tuple[str, float | None], ...] = ()
+    timed_lap_eligible: bool = False
+    current_lap_identity: int | None = None
+    structural_state: QualiPitState = QualiPitState.UNKNOWN
+    out_lap_confirmed: bool = False
+
+
+@dataclass(frozen=True)
+class QualiCompletedLap:
+    session_part: str
+    driver_number: str
+    lap_number: int
+    lap_time_s: float
+    session_time_s: float | None
+    classification: str = "normal_timed"
+
+
+@dataclass(frozen=True)
+class QualiLapEvidence:
+    session_part: str
+    driver_number: str
+    kind: str
+    lap_number: int | None
+    session_time_s: float | None
+    lap_time_s: float | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +92,14 @@ class QualiRawSnapshot:
     clock_running: bool
     drivers: tuple[QualiRawDriverState, ...]
     last_message_at_utc: datetime | None
+
+    normal_finished: bool = False
+    normal_finish_source: str | None = None
+    segment_duration_s: float | None = None
+    completed_lap_sequence: tuple[QualiCompletedLap, ...] = ()
+    # Presentation metadata only. It must never participate in domain state.
+    clock_anchor_session_time_s: float | None = None
+    lap_evidence_sequence: tuple[QualiLapEvidence, ...] = ()
 
     @classmethod
     def empty(cls) -> "QualiRawSnapshot":

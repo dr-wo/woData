@@ -25,10 +25,11 @@ LIVE_PHASE_1_TOPICS = (
 
 
 class FastF1LiveTimingSource:
-    def __init__(self, *, timeout: int = 0, no_auth: bool = False, logger=None) -> None:
+    def __init__(self, *, timeout: int = 0, no_auth: bool = False, logger=None, extra_topics=()) -> None:
         self.timeout = timeout
         self.no_auth = no_auth
         self.logger = logger
+        self.extra_topics = tuple(extra_topics)
         self._client = None
 
     def run(self, emit_message, emit_status) -> None:
@@ -71,7 +72,7 @@ class FastF1LiveTimingSource:
                     logger=self.logger,
                     no_auth=self.no_auth,
                 )
-                inner_self.topics = list(LIVE_PHASE_1_TOPICS)
+                inner_self.topics = list((*LIVE_PHASE_1_TOPICS, *self.extra_topics))
                 inner_self._stop_requested = threading.Event()
 
             def _on_connect(inner_self) -> None:
