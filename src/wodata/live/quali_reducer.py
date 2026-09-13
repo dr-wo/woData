@@ -11,7 +11,7 @@ from .models import LiveTimingMessage
 from .quali_models import (
     QualiCheckpoint, QualiPitState, QualiRawDriverState, QualiRawSnapshot,
     QualiTyreStint, QualiCompletedLap,
-    QualiLapEvidence,
+    QualiLapEvidence, QualiPositionObservation,
 )
 from .replay.schema import parse_timestamp
 from .quali_clock import (DEFAULT_SESSION_DURATIONS_S, STANDARD_QUALI_PARTS, SPRINT_QUALI_PARTS, countdown_seconds)
@@ -95,6 +95,7 @@ class QualiSessionStore:
         self._historical_best_s: float | None = None
         self._completed_lap_sequence: list[QualiCompletedLap] = []
         self._lap_evidence_sequence: list[QualiLapEvidence] = []
+        self._position_observations: list[QualiPositionObservation] = []
         self._segment_start_time_s: float | None = None
         self._utc_offset_s: float | None = None
         self._snapshot = self._build_snapshot()
@@ -109,6 +110,7 @@ class QualiSessionStore:
         return self.snapshot()
 
     def _apply_message(self, message: LiveTimingMessage) -> None:
+        self._position_observations = []
         self._last_message_at = message.received_at_utc
         candidate_time = message.session_time_seconds
         if candidate_time is None:
@@ -375,7 +377,7 @@ class QualiSessionStore:
 
     def _tyre_history(self, number: str) -> tuple[QualiTyreStint, ...]:
         history = []
-        for _, stint in sorted(self._tyre_stints.get(number, {}).items()):
+        for stint_index, stint in sorted(self._tyre_stints.get(number, {}).items()):
             start_laps = _as_int(stint.get("StartLaps"))
             if start_laps is None:
                 continue
@@ -385,6 +387,7 @@ class QualiSessionStore:
                     compound,
                     start_laps,
                     _as_bool(stint.get("New")),
+                    stint_index,
                 )
             )
         return tuple(history)
@@ -408,6 +411,11 @@ class QualiSessionStore:
                 if x is None or y is None:
                     continue
                 projected = self.pit_lane_geometry.project(x, y) if self.pit_lane_geometry else None
+                self._position_observations.append(QualiPositionObservation(
+                    str(number), sample_time,
+                    str(value.get("Status")) if value.get("Status") is not None else None,
+                    projected is not None if self.pit_lane_geometry else None,
+                ))
                 self._position[str(number)] = {
                     "time": sample_time, "x": x, "y": y, "status": value.get("Status"),
                     "pit_progress": projected[0] if projected else None,
@@ -431,7 +439,10 @@ class QualiSessionStore:
         if sampled_now is not None:
             now_s = max(now_s or -math.inf, sampled_now)
         states = []
-        numbers = set(self._drivers) | set(self._timing) | set(self._telemetry) | set(self._position)
+        # Position packets can contain numeric placeholders for cars absent
+        # from this event. Only identity or timing evidence creates a timing
+        # row; telemetry/position can enrich an already identified car.
+        numbers = set(self._drivers) | set(self._timing)
         for number in numbers:
             driver, timing = self._drivers.get(number, {}), self._timing.get(number, {})
             telemetry, position = self._telemetry.get(number, {}), self._position.get(number, {})
@@ -550,6 +561,7 @@ class QualiSessionStore:
             tuple(self._completed_lap_sequence),
             self._clock_anchor_session_time_s,
             tuple(self._lap_evidence_sequence),
+            tuple(self._position_observations),
         )
 
     def _effective_remaining_time_s(self) -> float | None:

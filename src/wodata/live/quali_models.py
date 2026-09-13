@@ -32,6 +32,7 @@ class QualiTyreStint:
     compound: str
     start_laps: int
     fresh: bool | None = None
+    stint_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,14 @@ class QualiLapEvidence:
 
 
 @dataclass(frozen=True)
+class QualiPositionObservation:
+    driver_number: str
+    session_time_s: float
+    status: str | None
+    pit_side: bool | None = None
+
+
+@dataclass(frozen=True)
 class QualiRawSnapshot:
     session_info: Mapping[str, object]
     session_status: str | None
@@ -100,6 +109,8 @@ class QualiRawSnapshot:
     # Presentation metadata only. It must never participate in domain state.
     clock_anchor_session_time_s: float | None = None
     lap_evidence_sequence: tuple[QualiLapEvidence, ...] = ()
+    # Only the samples carried by the most recently processed Position message.
+    position_observations: tuple[QualiPositionObservation, ...] = ()
 
     @classmethod
     def empty(cls) -> "QualiRawSnapshot":

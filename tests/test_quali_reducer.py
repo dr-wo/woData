@@ -30,6 +30,54 @@ def position(x, y, seconds, status="OnTrack"):
     return msg("Position.z", {"Position": [{"Entries": {"1": {"X": x, "Y": y, "Z": 0, "Status": status}}}]}, seconds)
 
 
+def test_position_packet_preserves_each_causal_traffic_observation():
+    store = QualiSessionStore(pit_lane_geometry=PitLaneGeometry(((0, 0), (10, 0)), 2))
+    packet = {"Position": [
+        {"Timestamp": f"2026-01-01T00:00:0{index}Z",
+         "Entries": {"1": {"X": x, "Y": 0, "Status": "OnTrack"}}}
+        for index, x in enumerate((1, 20, 21))
+    ]}
+    snapshot = store.apply(msg("Position.z", packet, 2))
+    assert len(snapshot.position_observations) == 3
+    assert [item.pit_side for item in snapshot.position_observations] == [True, False, False]
+    assert [item.session_time_s for item in snapshot.position_observations] == sorted(
+        item.session_time_s for item in snapshot.position_observations
+    )
+    assert not store.apply(timing(False)).position_observations
+
+
+def test_timing_app_stint_index_persists_across_qualifying_parts():
+    store = QualiSessionStore()
+    store.apply(msg("DriverList", {"1": {"Tla": "AAA"}}))
+    first = store.apply(msg("TimingAppData", {"Lines": {"1": {"Stints": {
+        "0": {"Compound": "MEDIUM", "New": "true", "StartLaps": 0},
+    }}}}))
+    assert first.drivers[0].tyre_history[0].stint_index == 0
+    store._set_part("Q2")
+    second = store.apply(msg("TimingAppData", {"Lines": {"1": {"Stints": {
+        "1": {"Compound": "SOFT", "New": "true", "StartLaps": 0},
+    }}}}))
+    assert [(tyre.stint_index, tyre.compound) for tyre in second.drivers[0].tyre_history] == [
+        (0, "MEDIUM"), (1, "SOFT"),
+    ]
+
+
+def test_position_only_placeholders_do_not_create_historical_driver_rows():
+    store = QualiSessionStore()
+    store.apply(msg("DriverList", {"1": {"Tla": "AAA", "TeamName": "Team"}}))
+    snapshot = store.apply(msg("Position.z", {"Position": [{"Entries": {
+        "1": {"X": 10, "Y": 20, "Status": "OnTrack"},
+        "15": {"X": 0, "Y": 0, "Status": "OnTrack"},
+    }}]}, 1))
+    assert [(driver.driver_number, driver.driver_code, driver.team) for driver in snapshot.drivers] == [
+        ("1", "AAA", "Team"),
+    ]
+    # Timing evidence still permits a genuine late, unidentified participant.
+    snapshot = store.apply(msg("TimingData", {"Lines": {"15": {"Position": 22}}}))
+    unknown = next(driver for driver in snapshot.drivers if driver.driver_number == "15")
+    assert unknown.driver_code == "15" and unknown.team == ""
+
+
 def test_fresh_rpm_in_garage_and_stale_rpm():
     store = QualiSessionStore(telemetry_freshness_s=5)
     store.apply(msg("DriverList", {"1": {"Tla": "AAA"}})); store.apply(timing())
