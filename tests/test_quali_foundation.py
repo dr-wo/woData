@@ -108,6 +108,33 @@ def test_segment_scoping_history_zero_and_13_minute_q3():
     assert genuine.completed_lap_sequence[-1].session_part == "Q3"
 
 
+def test_replay_bootstrap_zero_cannot_latch_finish_before_positive_countdown():
+    store = QualiSessionStore()
+    # Some archives carry a stale Started status and zero clock before Q1.
+    store.apply(message("SessionStatus", {"Status": "Started"}))
+    bootstrap = store.apply(clock("00:00:00"))
+    assert not bootstrap.normal_finished
+
+    store.apply(clock("18:00", running=True))
+    genuine_end = store.apply(clock("00:00:00"))
+    assert genuine_end.normal_finished
+    assert genuine_end.normal_finish_source == "clock_zero"
+
+
+def test_live_late_join_zero_keeps_existing_finish_semantics():
+    store = QualiSessionStore()
+    store.apply(LiveTimingMessage(
+        "SessionStatus", {"Status": "Started"}, None, NOW,
+        source="signalr_live", session_time_seconds=0,
+    ))
+    finished = store.apply(LiveTimingMessage(
+        "ExtrapolatedClock", {"Remaining": "00:00:00"}, None, NOW,
+        source="signalr_live", session_time_seconds=1,
+    ))
+    assert finished.normal_finished
+    assert finished.normal_finish_source == "clock_zero"
+
+
 def test_explicit_part_overrides_duration_defaults_and_red_flag_freezes():
     store = QualiSessionStore()
     store.apply(message("SessionInfo", {**IDENTITY, "SessionPart": "Q3"}))

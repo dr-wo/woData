@@ -90,6 +90,10 @@ class QualiSessionStore:
         self._normal_finished = False
         self._normal_finish_source: str | None = None
         self._segment_started = False
+        # A replay may start with a stale zero-countdown packet.  A genuine
+        # segment must first have supplied a positive countdown before zero is
+        # allowed to establish a clock-based normal finish.
+        self._segment_has_positive_countdown = False
         self._segment_duration_s: float | None = None
         self._history: dict[str, dict[str, float | None]] = {}
         self._historical_best_s: float | None = None
@@ -176,6 +180,8 @@ class QualiSessionStore:
                 # above.
                 if not self._segment_started and declared_remaining > 0:
                     self._segment_duration_s = declared_remaining
+                if declared_remaining > 0:
+                    self._segment_has_positive_countdown = True
                 self._remaining_time_s = remaining
                 self._clock_anchor_session_time_s = candidate_time
             if payload.get("Extrapolating") is not None:
@@ -212,7 +218,14 @@ class QualiSessionStore:
             self._apply_car_data(message)
         elif message.topic == "Position.z":
             self._apply_position(message)
-        if self._segment_started and self._effective_remaining_time_s() == 0:
+        if (
+            self._segment_started
+            # Live late joins retain their established finish semantics.  The
+            # positive-countdown bootstrap guard is only for archive replay.
+            and (message.source != "f1_archive_replay"
+                 or self._segment_has_positive_countdown)
+            and self._effective_remaining_time_s() == 0
+        ):
             self._normal_finished = True
             self._normal_finish_source = self._normal_finish_source or "clock_zero"
         # All inference and latches are advanced once per ordered message.
@@ -614,6 +627,7 @@ class QualiSessionStore:
         )
         self._record_lap_evidence("", "segment_start", None)
         self._segment_started = False
+        self._segment_has_positive_countdown = False
         self._normal_finished = False
         self._normal_finish_source = None
         self._segment_duration_s = None
