@@ -148,6 +148,22 @@ or the feed omits a lap/sector time, the reducer keeps the data it has and marks
 later cumulative timing unknown after internal gaps instead of fabricating a
 continuous race clock.
 
+`LiveSessionStore` owns the canonical racing-time axis consumed by downstream
+applications. Wall-clock time while a Race is suspended is excluded, and all
+drivers use a common race-time origin when source timing provides a reliable
+anchor. A late original `Started` event may recover that origin from source
+chronology, but restart `Started` events never reset it. When no reliable common
+anchor exists, cumulative timing remains explicitly unavailable instead of
+zero-basing each driver independently. Laps or sectors that cross a suspension
+likewise remain unavailable until they can be anchored safely.
+
+Sparse `TimingData` is reduced by lap provenance rather than by assuming every
+patch is complete. Equal consecutive `LastLapTime` values are valid, and lap
+completion is recovered whether the lap counter or sectors arrive first. Delayed
+sectors cannot authorize a later lap once their originating lap is committed.
+When sector detail is unreliable it may be suppressed while retaining a safe
+canonical completed-lap fallback.
+
 For Race sessions, reconnecting discovers non-empty recordings in the event
 directory, rejects files whose `SessionInfo` identifies another event, merges
 accepted captures deterministically, restores reducer/telemetry state, and then
