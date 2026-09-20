@@ -124,6 +124,10 @@ class ModelSnapshot:
     joint_weighted_cost: float | None = None
     session_weighted_costs: tuple[tuple[str, float], ...] = ()
     sampler_quality: tuple[tuple[str, object], ...] = ()
+    # Artifact-level semantics for the existing parameters.  This is deliberately
+    # kept out of ParameterEstimate/sample rows: one snapshot/sample bank shares
+    # the same coordinate, reference and uncertainty interpretation.
+    semantics: tuple[tuple[str, object], ...] = ()
 
 
 @dataclass(frozen=True)

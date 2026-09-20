@@ -36,7 +36,8 @@ def test_model_and_strategy_artifacts_round_trip(tmp_path):
         50.0, 0.2, 0.0, 0.0, "input", "config", created,
     )
     snapshot = ModelSnapshot(
-        "analysis-1", "bank-1", "FP2", 0, (estimate,), "input", "config", created
+        "analysis-1", "bank-1", "FP2", 0, (estimate,), "input", "config", created,
+        semantics=(("uncertainty", {"kind": "marginal_quantiles", "joint_sample_bank_id": "bank-1"}),),
     )
     destination = write_model_snapshot(snapshot, year=2026, round_number=4, data_root=tmp_path)
     assert (destination / "latest_support.csv").is_file()
@@ -48,6 +49,10 @@ def test_model_and_strategy_artifacts_round_trip(tmp_path):
     assert manifest["included_sessions"] == ["FP2"]
     assert manifest["max_information_session"] == "FP2"
     assert manifest["information_cutoff"] == "FP2"
+    assert manifest["semantics"]["uncertainty"] == {
+        "kind": "marginal_quantiles",
+        "joint_sample_bank_id": "bank-1",
+    }
     assert rows[0]["compound"] == "MEDIUM"
     costs_path = write_joint_candidate_costs(
         [{"SampleId": 0, "TotalCost": 1.2, "FP2Cost": 1.2}],

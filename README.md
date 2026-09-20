@@ -398,6 +398,11 @@ instead of defining local palettes.
 
 ## Development context
 
+Cross-repository pace/tyre artifacts follow
+[`CANONICAL_PACE_CONTRACT.md`](CANONICAL_PACE_CONTRACT.md). Producers should
+write its artifact-level semantics and consumers should preserve them without
+inventing missing legacy provenance.
+
 This project is developed extensively with coding agents. Durable context in the
 code, tests and adjacent package documentation preserves interfaces, assumptions,
 known compromises and validation requirements across development sessions.
