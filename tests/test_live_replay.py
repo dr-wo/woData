@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from wodata.live import LiveSessionStore, ReplayLiveTimingSource
-from wodata.live.replay.player import load_replay
+from wodata.live.replay.player import ReplayPlayer, load_replay
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "live_phase_1.txt"
@@ -51,3 +51,9 @@ def test_jsonl_live_recording_without_session_clock_replays_by_receive_time(tmp_
     assert [event.session_time_seconds for event in events] == [0.0, 2.5]
     assert [event.message_session_time_seconds for event in events] == [None, None]
     assert all(event.preserve_message_session_time for event in events)
+    replayed = []
+    ReplayPlayer(path, speed=0).play(replayed.append)
+    assert [message.received_at_utc.isoformat() for message in replayed] == [
+        "2026-09-06T13:00:00+00:00",
+        "2026-09-06T13:00:02.500000+00:00",
+    ]
