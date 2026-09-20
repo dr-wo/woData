@@ -42,6 +42,13 @@ __all__ = [
     "parse_event_id",
     "resolve_event",
     "resolve_race_distance",
+    "event_identity_from_metadata",
+    "event_operational_inputs_path",
+    "find_event_operational_inputs_by_identity",
+    "has_stable_event_identity",
+    "read_event_operational_inputs",
+    "resolve_event_operational_identity",
+    "write_event_operational_inputs",
 ]
 
 
@@ -171,4 +178,13 @@ from wodata.events import (  # noqa: E402
     parse_event_id,
     resolve_event,
     resolve_race_distance,
+)
+from wodata.event_operational import (  # noqa: E402
+    event_identity_from_metadata,
+    event_operational_inputs_path,
+    find_event_operational_inputs_by_identity,
+    has_stable_event_identity,
+    read_event_operational_inputs,
+    resolve_event_operational_identity,
+    write_event_operational_inputs,
 )

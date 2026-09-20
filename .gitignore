@@ -30,4 +30,7 @@ env/
 /wodata/
 /woplanner/
 /wostrategy/
-/woweekend/
+# Immutable workflow runs remain local runtime output. Event operational history
+# is durable source data and is intentionally visible to version control.
+/woweekend/*
+!/woweekend/event_operational_inputs/

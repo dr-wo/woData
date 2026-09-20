@@ -1,0 +1,45 @@
+{
+  "created_at": "2026-09-20T00:00:00+00:00",
+  "event_id": "2026-14",
+  "event_identity": {
+    "country": "Spain",
+    "event_name": "Spanish Grand Prix",
+    "location": "Madrid",
+    "official_event_name": "FORMULA 1 TAG HEUER GRAN PREMIO DE ESPAÑA 2026"
+  },
+  "event_identity_status": "available",
+  "operational": {
+    "pit_loss": {
+      "green": {
+        "total": 24.2
+      },
+      "legacy_sc_vsc": {
+        "not_separate_sc_or_vsc": true,
+        "semantic_role": "legacy_combined_context_only",
+        "total": 13.0
+      },
+      "sc": {
+        "total": null
+      },
+      "vsc": {
+        "total": null
+      }
+    },
+    "race": {
+      "total_laps": 57
+    }
+  },
+  "operational_assumptions_not_empirical": true,
+  "provenance": {
+    "authority": "mirror_of_current_editable_workflow_configuration",
+    "empirical_observation": false,
+    "operational_input": true,
+    "source": "woWeekend/configs/race.json",
+    "updated_via": "Prompt 4 ownership migration"
+  },
+  "round_number": 14,
+  "schema_version": "schema_v1",
+  "season": 2026,
+  "semantic_role": "event_operational_assumptions",
+  "updated_at": "2026-09-20T00:00:00+00:00"
+}

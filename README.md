@@ -93,6 +93,37 @@ run.save_json("config.input", {"source": "operator"})
 run.save_manifest({"status": "SUCCESS"})
 ```
 
+## Event operational history
+
+`wodata.event_operational` stores one replaceable latest/final operational
+record per event under
+`woweekend/event_operational_inputs/schema_v1/year=YYYY/round=RR/`. These files
+are durable mirrors of values adopted through woPlanner's Apply action; the
+editable authority remains `woWeekend/configs/race.json`. They are not
+immutable run snapshots and they are not empirical observations.
+
+Cross-season lookup requires a stable circuit identity (`circuit_id`, or
+country plus location, with a circuit label as a final explicit identifier).
+Display-name-only matching is deliberately rejected, and ambiguous matches are
+reported as unavailable. Consumers may present a prior event's operational
+record beside separately labelled post-race empirical evidence, but neither is
+a current-event calculation or autofill source.
+
+The current schema is `schema_v1`. Each season/round record stores resolved total
+laps plus separate GREEN, SC, and VSC operational totals; null means unresolved.
+Legacy combined SC/VSC may be retained only with its explicit context-only role
+and is never promoted into SC or VSC. Provenance identifies the accepted editable
+source and writer. On partial updates, an omitted API field preserves the durable
+value already recorded, while an explicit null intentionally clears a field when
+that API call supports clearing it.
+
+A durable record must have sufficient stable event/circuit identity belonging to
+its requested `(season, round)`. Identity cached for another event is not trusted:
+canonical event metadata is resolved when ownership is absent or mismatched, and
+conflicting supplied identity is discarded in favour of the requested event.
+The store is therefore durable history of accepted operational state, not a
+second independently editable live configuration source.
+
 ## Live timing
 
 The optional `wodata.live` package provides authenticated FastF1 live ingestion,
