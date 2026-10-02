@@ -406,3 +406,95 @@ inventing missing legacy provenance.
 This project is developed extensively with coding agents. Durable context in the
 code, tests and adjacent package documentation preserves interfaces, assumptions,
 known compromises and validation requirements across development sessions.
+
+### Historical race interruption contract
+
+woData owns source access, venue identity and the persisted bounded contract in
+`src/wodata/interruption_history.py`. The canonical result is stored at
+`<data_root>/wostrategy/interruption_history/schema_v1/year=YYYY/round=RR/history.json`.
+`write_history` validates and atomically replaces it; `load_history` validates it and
+reads local files only. Acquisition reuses FastF1's canonical raw cache and original
+`track_status`, `session_status`, `session_start_time`, raw `laps.Time`, and race-control
+aborted-start evidence. woStrategy owns extraction/preparation; woWeekend and
+woPlanner consume the same saved values.
+
+The history selects the latest five **prior races at the same venue**, including
+skipped years and multiple races in a season. It excludes the target, later rounds,
+and races not proved earlier than both the target race and acquisition cutoff.
+Missing/`NaT` race dates fall back through `Session5DateUtc`, `Session5Date` and
+`EventDate`; a same-season edition without chronological evidence is excluded and
+selection is marked incomplete. A date-only value on the cutoff day is ambiguous.
+Matching reuses woData's operational identity policy: circuit ID, then
+country/location, then circuit text; event display names are not keys. Available
+identity and schedule provenance are retained. Layout changes are not inferred,
+normalized or excluded; venue identity does not assert equivalent layouts.
+
+Only race-time Safety Car (`TrackStatus=4`) and Red Flag (`5`) occurrences are
+inventoried; pure VSC (`6`/`7`) is excluded. Stable timestamp/source order preserves
+multiple events within a lap, while contiguous repeated messages add no occurrence.
+An unknown interval can split one minimum occurrence into uncertain fragments:
+`SC → unknown → SC` proves **at least one**, not two. Only a trusted differing status
+proves an intervening exit and supports another distinct minimum occurrence.
+Fragments retain unknown boundaries and may represent separate deployments.
+
+FastF1's first SessionStatus `Started` is an initial candidate. A non-generated raw
+race-lap completion after that candidate and before suspension/start-abort
+corroborates genuine racing and locks the original start. Before corroboration,
+a mapped explicit `START ABORTED`/`ABORTED START` can move the candidate to a later
+`Started`; after corroboration, later aborted restarts never replace it. Missing or
+conflicting original-start/abort evidence leaves admission ambiguous. Raw completed
+race laps at or before any candidate `Started` prevent treating a restart as the
+original start, even if a backmarker completes the same lap later. Prior suspension
+or abort evidence does not override those earlier completions. This also
+conservatively leaves a race suspended before its first reliable completed lap
+ambiguous. Formation interruptions ending before the admitted start are excluded;
+a pre-start SC/RF still active at the start has no proven post-start deployment and
+is excluded with a coverage warning.
+
+Approximate leader boundaries require independent original timing-stream evidence:
+reported `Position=1` on consecutive leader lap labels `LAP N → LAP N+1` identifies
+the driver completing lap N. woData acquires that stream through FastF1's existing
+cached timing API; woStrategy uses only that driver's non-generated raw `laps.Time`
+for the boundary. FastF1's `laps.Position` ranks remaining completion rows and is
+not authority evidence. A missing leader row/time, missing independent lap advance,
+or unknown generation flag leaves the boundary unavailable; neither a later
+backmarker nor a later leader report repairs it. Raw session elapsed time includes
+suspension gaps. Non-monotonic/inconsistent chains still fail closed, and a missing
+boundary needed for an interval yields `lap=null` while retaining the occurrence.
+
+**The displayed SC range is the set of laps during which SC status was active for
+any portion of the lap.** Entry uses `[lap start, lap end)` and withdrawal uses
+`(lap start, lap end]`: partial L11 through partial L13 displays `~L11–13`, while
+withdrawal exactly at the L1 completion displays `~L1`, excluding L2. A direct
+SC → Red Flag transition ends the SC there and is labelled accordingly. Red Flag
+uses only its entry lap, never a suspension-duration range. Zero-duration updates
+at a boundary retain the occurrence with unavailable lap context.
+
+`schema_version=1`, `semantic_role=historical_race_interruptions` preserves the
+target, newest-first identities, selection provenance, source integrity evidence,
+start-admission evidence, coverage reasons, timeline hash, and SC/Red Flag families.
+Each family has `occurred` (true/false/null), `count` (exact integer/null),
+`observed_count` (minimum distinct occurrences), and chronological `occurrences`
+with cross-family sequence, original seconds/source indexes, uncertain fragments,
+trusted exit proof and approximate/unavailable laps. Missing deployment boundaries
+retain `start_seconds=null`, unavailable start laps and `first_observed_seconds`.
+Validation rejects unsupported enums, inconsistent null/timestamp/lap values,
+backwards/overlapping known intervals, unsupported grouping, contradictory counts,
+missing provenance, and complete records lacking required deployment boundaries.
+Legitimate partial/ambiguous records remain representable. Unsupported older draft
+artifacts degrade to unavailable and must be explicitly prepared again.
+
+**Confirmed zero requires affirmative TrackStatus integrity**, supported original
+race admission, start baseline, terminal lifecycle, valid transitions and
+unambiguous required deployment boundaries. The source must explicitly provide
+`track_status_integrity.status=verified_complete` with nonempty evidence identifying
+a completeness/integrity check. A boolean, lifecycle completion, timeline hash,
+HTTP success or parser-version match is insufficient. The inspected FastF1 3.8.3
+TrackStatus parser/cache provides no such signal: its adapter emits integrity
+`unknown` with no affirmative evidence. Therefore its historical empty streams
+show **No event observed; coverage unproven**, never confirmed “No SC”/“No Red Flag”.
+Observed positive events remain confirmed minimums with null exact totals, shown as
+**at least N (incomplete)**. Only explicit integrity-checked fixture sources currently
+exercise confirmed-zero behavior. Report and Planner use the same local artifact
+and formatting; neither acquires data on render/reload. This descriptive context
+never changes strategy, probabilities or operational inputs.
