@@ -382,7 +382,14 @@ class LiveSessionStore:
                 if x is None or y is None or z is None:
                     continue
                 status = position.get("Status")
-                on_track = None if status is None else str(status).lower() in {"ontrack", "0"}
+                normalized_status = (
+                    str(status).strip().lower()
+                    if isinstance(status, (str, int)) and not isinstance(status, bool)
+                    else ""
+                )
+                on_track = {
+                    "ontrack": True, "0": True, "offtrack": False, "1": False,
+                }.get(normalized_status)
                 latest = self._position_samples.setdefault(str(number), deque())
                 value = LivePositionSample(str(number), sample_time, x, y, z, on_track)
                 # Embedded sample time, not arrival order, controls retention. A

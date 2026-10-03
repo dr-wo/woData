@@ -125,3 +125,22 @@ def test_position_requires_aware_embedded_time_and_conflicts_remain_unknown():
     store.reduce(packet('2026-01-01T00:00:01Z',11))
     assert len(store.snapshot().position_samples)==1
     assert store.snapshot().position_samples[0].on_track is None
+
+
+def test_unrecognised_position_status_remains_unknown():
+    for status in ['garbage', '', {}, True, 2, None]:
+        store = LiveSessionStore()
+        result = store.apply(LiveTimingMessage('Position.z', {'Position': [{
+            'Timestamp': NOW.isoformat(),
+            'Entries': {'1': {'X': 10, 'Y': 20, 'Z': 1, 'Status': status}},
+        }]}, NOW, NOW))
+        assert result.position_samples[0].on_track is None, status
+
+
+def test_only_known_position_statuses_become_booleans():
+    for status, expected in [('OnTrack',True),('OffTrack',False),(0,True),(1,False)]:
+        result = LiveSessionStore().apply(LiveTimingMessage('Position.z', {'Position': [{
+            'Timestamp': NOW.isoformat(),
+            'Entries': {'1': {'X': 10, 'Y': 20, 'Z': 1, 'Status': status}},
+        }]}, NOW, NOW))
+        assert result.position_samples[0].on_track is expected
