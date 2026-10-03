@@ -188,12 +188,31 @@ anchor exists, cumulative timing remains explicitly unavailable instead of
 zero-basing each driver independently. Laps or sectors that cross a suspension
 likewise remain unavailable until they can be anchored safely.
 
-Sparse `TimingData` is reduced by lap provenance rather than by assuming every
-patch is complete. Equal consecutive `LastLapTime` values are valid, and lap
-completion is recovered whether the lap counter or sectors arrive first. Delayed
-sectors cannot authorize a later lap once their originating lap is committed.
-When sector detail is unreliable it may be suppressed while retaining a safe
-canonical completed-lap fallback.
+### Canonical history and provisional observations
+
+Sparse raw `TimingData` may contain ambiguous lap identity, delayed values, or
+corrections. `LiveSessionSnapshot.completed_laps` and `completed_sectors` are
+conservative committed history. `provisional_sectors` retains revisable pending
+observations separately, and `live_timing` retains official lap/order/gap fields
+with their publication provenance. Analysis consumers should trust committed
+history, not promote pending observations themselves.
+
+Sector promotion requires a complete duration-consistent tuple and independent
+source/boundary certification: each sector publication must fall after the
+preceding observed counter boundary (or preceding committed-lap boundary) and
+at or before the retained completion-counter boundary. Lap 1 requires an
+observed initial `Started` boundary; an inferred race origin is insufficient.
+An inferred pending generation and a matching sector sum alone never certify
+sector identity. Missing provenance or an unavailable preceding restart lap
+prevents promotion. Publication timestamps are evidence bounds, not assumed
+physical line-crossing times.
+
+Equal consecutive `LastLapTime` values remain valid, and completed-lap timing
+can be retained when sector detail cannot be certified. Unsupported canonical
+sectors are intentionally omitted: this conservative omission protects history
+and analytical inputs rather than filling gaps with ambiguous evidence. Missing
+cumulative bases remain unavailable and never become zero. Presentation policy
+for provisional observations belongs to downstream applications.
 
 For Race sessions, reconnecting discovers non-empty recordings in the event
 directory, rejects files whose `SessionInfo` identifies another event, merges
@@ -209,9 +228,9 @@ live reduction keeps retirement final.
 the output cacheable: unchanged sources reuse it, while any changed capture
 rebuilds it. Stop/reset cancels replay flow-control waits promptly.
 
-Incremental `TimingData` sector patches are published as soon as S1, S2, or S3
-is available; a full lap is not required. Pending sector values are retained
-across patches and attributed using the declared/last completed lap. A driver is
+Incremental `TimingData` sector patches can produce provisional observations as
+soon as S1, S2, or S3 is available; a full lap is not required. Pending values
+can revise or disappear without entering committed sector history. A driver is
 cut off only when `TimingData.Lines[*].Retired` is explicitly true. The first
 such message freezes the greatest completed/declared lap; missing timing, status
 text, or lack of movement is deliberately not interpreted as DNF. Consequently,

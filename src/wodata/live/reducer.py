@@ -13,6 +13,8 @@ from typing import Mapping
 from .models import (
     CompletedLap,
     CompletedSector,
+    ProvisionalSector,
+    LiveTimingState,
     LiveDriver,
     LiveSessionSnapshot,
     LiveTimingMessage,
@@ -72,7 +74,9 @@ def _lap_time_seconds(value: object) -> float | None:
     return seconds if math.isfinite(seconds) and seconds > 0 else None
 
 
-def _sector_time_updates(value: object) -> dict[int, float]:
+def _sector_time_updates(
+    value: object, *, include_clears: bool = False
+) -> dict[int, float | None]:
     if isinstance(value, list):
         items = enumerate(value[:3])
     elif isinstance(value, Mapping):
@@ -86,6 +90,13 @@ def _sector_time_updates(value: object) -> dict[int, float]:
         except (TypeError, ValueError):
             continue
         if index not in (0, 1, 2):
+            continue
+        # A missing Value (for example a Segments/PreviousValue patch) leaves
+        # the duration unchanged. F1 explicitly resets it with Value="".
+        raw_value = sector.get("Value") if isinstance(sector, Mapping) else sector
+        if raw_value == "":
+            if include_clears:
+                sector_times[index] = None
             continue
         sector_time = _lap_time_seconds(sector)
         if sector_time is not None:
@@ -124,6 +135,8 @@ class LiveSessionStore:
         self._scheduled_total_laps: int | None = None
         self._drivers: dict[str, dict] = {}
         self._timing: dict[str, dict] = {}
+        self._live_registers: dict[str, dict] = {}
+        self._latest_source_time_s: float | None = None
         self._tyre_stints: dict[str, dict[int, dict]] = {}
         self._positions: dict[str, int] = {}
         self._laps: dict[str, dict[int, dict]] = {}
@@ -167,6 +180,9 @@ class LiveSessionStore:
         self._sequence += 1
         self._last_message_at = message.received_at_utc
         payload = message.payload
+        source_time = _event_time_seconds(message.source_timestamp_utc, message.session_time_seconds)
+        if source_time is not None:
+            self._latest_source_time_s = max(source_time, self._latest_source_time_s or source_time)
         if message.topic == "SessionInfo" and isinstance(payload, Mapping):
             _deep_merge(self._session_info, payload)
         elif message.topic == "SessionStatus" and isinstance(payload, Mapping):
@@ -404,6 +420,16 @@ class LiveSessionStore:
             if not isinstance(patch, Mapping):
                 continue
             number = str(number)
+            registers = self._live_registers.setdefault(number, {})
+            event_time = _event_time_seconds(timestamp, session_time_seconds)
+            for field in ("NumberOfLaps", "Position", "GapToLeader", "IntervalToPositionAhead"):
+                if field not in patch:
+                    continue
+                previous_time = registers.get(field + "_time")
+                if event_time is not None and previous_time is not None and event_time < previous_time:
+                    continue
+                registers[field] = copy.deepcopy(patch[field])
+                registers[field + "_time"] = event_time
             timing = self._timing.setdefault(number, {})
             _deep_merge(timing, patch)
             position = _as_int(patch.get("Position"))
@@ -498,7 +524,12 @@ class LiveSessionStore:
                 "time_event_time_s": None,
                 "sectors": None,
                 "sector_values": [None, None, None],
+                "sector_event_times_s": [None, None, None],
                 "sector_lap": None,
+                "counter_events": {},
+                "time_lap": None,
+                "sector_clears_s": [None, None, None],
+                "sector_started_after_s": None,
                 "sectors_seq": 0,
                 "sectors_timestamp": None,
                 "sectors_session_time_seconds": None,
@@ -525,93 +556,78 @@ class LiveSessionStore:
                     else self._earliest_timing_event_s
                 ),
             )
-        if "NumberOfLaps" in patch and not _is_older(timestamp, pending["lap_timestamp"]):
-            lap = _as_int(patch.get("NumberOfLaps"))
-            if lap is not None and lap > 0:
-                pending.update(
-                    lap=lap,
-                    lap_seq=self._sequence,
-                    lap_timestamp=timestamp,
-                    lap_event_time_s=event_time_s,
-                )
-        if "LastLapTime" in patch and not _is_older(timestamp, pending["time_timestamp"]):
-            lap_time = _lap_time_seconds(patch.get("LastLapTime"))
-            if lap_time is None:
+        patch_lap = _as_int(patch.get("NumberOfLaps"))
+        if patch_lap is not None and patch_lap > 0:
+            counters = pending["counter_events"]
+            if patch_lap not in counters:
+                counters[patch_lap] = (event_time_s, timestamp, self._sequence)
+            if pending["lap"] is None or patch_lap > pending["lap"]:
+                pending.update(lap=patch_lap, lap_seq=self._sequence,
+                               lap_timestamp=timestamp, lap_event_time_s=event_time_s)
+        fresh_time = _lap_time_seconds(patch.get("LastLapTime"))
+        if "LastLapTime" in patch:
+            if fresh_time is None:
                 self.invalid_lap_time_count += 1
             else:
-                pending.update(
-                    time=lap_time,
-                    time_seq=self._sequence,
-                    time_timestamp=timestamp,
-                    time_event_time_s=event_time_s,
-                )
-        if "Sectors" in patch and not _is_older(timestamp, pending["sectors_timestamp"]):
-            sector_updates = _sector_time_updates(patch.get("Sectors"))
-            latest_lap = max(self._laps.get(number, {}), default=0)
-            fresh_pending_lap = bool(
-                pending.get("lap")
-                and pending["lap"] > latest_lap
-                and pending["lap_seq"] > pending["committed_seq"]
-            )
-            latest_lap_end_s = (
-                self._laps[number][latest_lap].get("lap_end_time_s")
-                if latest_lap
-                else None
-            )
-            sectors_predate_committed_boundary = bool(
-                latest_lap > 0
-                and (
-                    event_time_s is None
-                    or latest_lap_end_s is None
-                    or event_time_s <= latest_lap_end_s
-                )
-            )
-            if sectors_predate_committed_boundary:
-                sector_updates = {}
-            if sector_updates and pending["sector_lap"] is None:
-                patch_lap_time = _lap_time_seconds(patch.get("LastLapTime"))
-                if patch_lap_time is not None and "NumberOfLaps" in patch:
-                    pending["sector_lap"] = _as_int(patch.get("NumberOfLaps"))
-                elif fresh_pending_lap:
-                    pending["sector_lap"] = pending["lap"]
-                elif (
-                    "NumberOfLaps" in patch
-                    and (_as_int(patch.get("NumberOfLaps")) or 0)
-                    > max(self._laps.get(number, {}), default=0)
-                ):
-                    pending["sector_lap"] = _as_int(patch.get("NumberOfLaps"))
-                else:
-                    completed_lap = max(
-                        max(self._laps.get(number, {}), default=0),
-                        pending.get("lap") or 0,
-                    )
-                    pending["sector_lap"] = completed_lap + 1
-            for index, sector_time in sector_updates.items():
-                pending["sector_values"][index] = sector_time
-            if sector_updates:
-                pending.update(
-                    sectors_seq=self._sequence,
-                    sectors_timestamp=timestamp,
-                    sectors_session_time_seconds=session_time_seconds,
-                    sectors_event_time_s=event_time_s,
-                )
-            if all(value is not None for value in pending["sector_values"]):
-                pending.update(
-                    sectors=tuple(pending["sector_values"]),
-                )
-
-        lap = pending["lap"]
+                target_lap = patch_lap
+                if target_lap is None and event_time_s is not None:
+                    eligible = [(stamp, lap) for lap, (stamp, _, _) in
+                                pending["counter_events"].items()
+                                if stamp is not None and stamp <= event_time_s]
+                    if eligible:
+                        target_lap = max(eligible)[1]
+                if target_lap is None:
+                    target_lap = pending["lap"]
+                # Preserve each counter's identity when an older completion is
+                # published after a newer counter. This is completion routing,
+                # not a claim that publication timestamps are line crossings.
+                existing = self._laps.get(number, {}).get(target_lap, {})
+                existing_time = existing.get("time_event_time_s")
+                if not (event_time_s is not None and existing_time is not None
+                        and event_time_s < existing_time):
+                    pending.update(time=fresh_time, time_seq=self._sequence,
+                                   time_timestamp=timestamp, time_event_time_s=event_time_s,
+                                   time_lap=target_lap)
+        self._update_provisional_sectors(number, pending, patch, timestamp,
+                                         session_time_seconds, event_time_s)
+        lap = pending["time_lap"] if fresh_time is not None else pending["lap"]
+        if lap is None:
+            lap = pending["lap"]
         lap_time = pending["time"]
         if lap is None or lap_time is None:
             return
+        counter = pending["counter_events"].get(lap)
+        if counter is None:
+            return
+        previous_lap = self._laps.get(number, {}).get(lap - 1)
+        previous_boundary = pending["counter_events"].get(lap - 1, (None,))[0]
+        if previous_boundary is None and previous_lap is not None:
+            previous_boundary = previous_lap.get("lap_end_time_s")
+        if lap == 1 and not self._has_observed_abort:
+            # An observed initial Started can bound lap 1; a race origin
+            # inferred by subtracting its duration cannot certify its sectors.
+            previous_boundary = self._last_session_status_event_s
+        sectors = pending["sectors"]
+        sector_times = pending["sector_event_times_s"]
+        reconciled_sectors = None
+        if (sectors is not None and math.isclose(sum(sectors), lap_time, abs_tol=0.01)
+                and previous_boundary is not None and counter[0] is not None
+                and all(value is not None and previous_boundary < value <= counter[0]
+                        for value in sector_times)):
+            # Certification uses independently observed publication boundaries,
+            # never provisional identity or a boundary extended by a late LLT.
+            # Sum equality is only a consistency check within that interval.
+            reconciled_sectors = sectors
+        if previous_lap is not None and not previous_lap.get("is_valid", True):
+            # A later endpoint may retro-anchor an unavailable restart lap.
+            # That recovery does not establish the intervening sector history.
+            reconciled_sectors = None
         retirement_lap = self._retired_after_lap.get(number)
         if retirement_lap is not None and lap > retirement_lap:
             return
         driver_laps = self._laps.setdefault(number, {})
         latest_lap = max(driver_laps, default=0)
-        if lap < latest_lap:
-            return
-        if lap == latest_lap and pending["time_seq"] > pending["committed_seq"]:
+        if lap in driver_laps and pending["time_seq"] > pending["committed_seq"]:
             existing = driver_laps[lap]
             if math.isclose(
                 existing.get("source_lap_time_s", existing["lap_time_s"]),
@@ -622,8 +638,9 @@ class LiveSessionStore:
             else:
                 existing["source_lap_time_s"] = lap_time
                 existing["lap_time_s"] = lap_time
-                if pending["sectors_seq"] > pending["committed_seq"]:
-                    existing["sector_times_s"] = pending["sectors"]
+                if reconciled_sectors is not None:
+                    existing["sector_times_s"] = reconciled_sectors
+                existing["time_event_time_s"] = pending["time_event_time_s"]
                 existing["source_timestamp_utc"] = timestamp
                 existing["session_time_seconds"] = session_time_seconds
                 self.corrected_completed_lap_count += 1
@@ -631,19 +648,21 @@ class LiveSessionStore:
             pending["committed_seq"] = self._sequence
             pending["time_seq"] = 0
             return
-        if lap <= latest_lap:
+        if lap in driver_laps:
             return
-        fresh_lap = pending["lap_seq"] > pending["committed_seq"]
-        fresh_time = pending["time_seq"] > pending["committed_seq"]
-        # Differential patches omit unchanged values.  Reusing the merged lap
-        # time is safe only when fresh, complete sectors identify this exact lap.
+        fresh_time = (pending["time_seq"] > pending["committed_seq"]
+                      and pending["time_lap"] in (None, lap))
+        # Differential patches omit unchanged lap times. Reuse requires a
+        # complete generation ending by this counter's publication; a later
+        # ambiguous tuple is insufficient.
         reuse_merged_time = not fresh_time and self._can_reuse_merged_lap_time(
-            pending, lap=lap, latest_lap=latest_lap, lap_time_s=lap_time
+            pending, lap=lap, latest_lap=latest_lap, lap_time_s=lap_time,
+            latest_lap_end_s=driver_laps.get(latest_lap, {}).get("lap_end_time_s"),
         )
-        if not (fresh_lap and (fresh_time or reuse_merged_time)):
+        if not (fresh_time or reuse_merged_time):
             return
-        evidence_timestamps = [pending["lap_timestamp"]]
-        evidence_event_times = [pending["lap_event_time_s"]]
+        evidence_timestamps = [counter[1]]
+        evidence_event_times = [counter[0]]
         if fresh_time:
             evidence_timestamps.append(pending["time_timestamp"])
             evidence_event_times.append(pending["time_event_time_s"])
@@ -658,7 +677,8 @@ class LiveSessionStore:
             "source_lap_time_s": lap_time,
             "lap_time_s": lap_time,
             "cumulative_time_s": 0.0,
-            "sector_times_s": pending["sectors"],
+            "sector_times_s": reconciled_sectors,
+            "time_event_time_s": pending["time_event_time_s"],
             "sector_event_time_s": pending.get("sectors_event_time_s"),
             "position": self._positions.get(number),
             "source_timestamp_utc": max(
@@ -675,28 +695,99 @@ class LiveSessionStore:
         pending["committed_seq"] = self._sequence
         pending["lap_seq"] = 0
         pending["time_seq"] = 0
-        pending["sectors"] = None
-        pending["sector_values"] = [None, None, None]
-        pending["sector_lap"] = None
-        pending["sectors_seq"] = 0
-        pending["sectors_timestamp"] = None
-        pending["sectors_session_time_seconds"] = None
-        pending["sectors_event_time_s"] = None
+        if pending["sector_lap"] is None or pending["sector_lap"] <= lap:
+            pending["sectors"] = None
+            pending["sector_values"] = [None, None, None]
+            pending["sector_event_times_s"] = [None, None, None]
+            pending["sector_lap"] = None
+            pending["sectors_seq"] = 0
+            pending["sectors_timestamp"] = None
+            pending["sectors_session_time_seconds"] = None
+            pending["sectors_event_time_s"] = None
         pending["track_statuses"] = (
             {self._current_track_status} if self._current_track_status else set()
         )
 
+    def _update_provisional_sectors(
+        self, number: str, pending: dict, patch: Mapping, timestamp: datetime | None,
+        session_time_seconds: float | None, event_time_s: float | None,
+    ) -> None:
+        updates = _sector_time_updates(patch.get("Sectors"), include_clears=True)
+        if not updates:
+            return
+        counter_lap = pending["lap"] or 0
+        counter_time = pending["lap_event_time_s"]
+        last_committed = max(self._laps.get(number, {}), default=0)
+        explicit_completion = (_as_int(patch.get("NumberOfLaps")) is not None
+                               and _lap_time_seconds(patch.get("LastLapTime")) is not None)
+        after_counter = (counter_time is not None and event_time_s is not None
+                         and event_time_s > counter_time)
+        # Current display identity may be revised at completion. It is never
+        # exported through completed_sectors until separately reconciled.
+        desired_lap = (_as_int(patch.get("NumberOfLaps")) if explicit_completion else
+                       counter_lap + 1 if after_counter else
+                       counter_lap if counter_lap > last_committed else last_committed + 1)
+        if pending["sector_lap"] is None:
+            pending["sector_lap"] = desired_lap
+            pending["sector_started_after_s"] = counter_time if after_counter else None
+        elif updates.get(0) is not None and (desired_lap > pending["sector_lap"]
+                                              or pending["sectors"] is not None):
+            previous_s1 = pending["sector_event_times_s"][0]
+            if previous_s1 is None or event_time_s is None or event_time_s > previous_s1:
+                pending["sector_lap"] = desired_lap
+                pending["sector_started_after_s"] = counter_time if after_counter else None
+                pending["sector_values"] = [None, None, None]
+                pending["sector_event_times_s"] = [None, None, None]
+                # A reset delivered before an older S1 still protects the
+                # addressed fields from older values arriving afterwards.
+                pending["sector_clears_s"] = [
+                    clear if (clear is not None and event_time_s is not None
+                              and clear >= event_time_s) else None
+                    for clear in pending["sector_clears_s"]
+                ]
+        if explicit_completion and len(_sector_time_updates(patch.get("Sectors"))) == 3:
+            pending["sector_lap"] = desired_lap
+        accepted = False
+        for index, value in updates.items():
+            generation_start = pending["sector_started_after_s"]
+            if (generation_start is not None and event_time_s is not None
+                    and event_time_s <= generation_start and not explicit_completion):
+                continue
+            previous = pending["sector_event_times_s"][index]
+            clear = pending["sector_clears_s"][index]
+            watermark = max((t for t in (previous, clear) if t is not None), default=None)
+            if event_time_s is not None and watermark is not None and event_time_s < watermark:
+                continue
+            if value is not None and clear is not None and event_time_s is not None and event_time_s <= clear:
+                continue
+            if value is None:
+                pending["sector_clears_s"][index] = event_time_s
+            pending["sector_values"][index] = value
+            pending["sector_event_times_s"][index] = event_time_s
+            accepted = True
+        if accepted and (pending["sectors_event_time_s"] is None or event_time_s is None
+                         or event_time_s >= pending["sectors_event_time_s"]):
+            pending.update(sectors_seq=self._sequence, sectors_timestamp=timestamp,
+                           sectors_session_time_seconds=session_time_seconds,
+                           sectors_event_time_s=event_time_s)
+        pending["sectors"] = (tuple(pending["sector_values"])
+                              if all(value is not None for value in pending["sector_values"])
+                              else None)
+
     @staticmethod
     def _can_reuse_merged_lap_time(
-        pending: dict, *, lap: int, latest_lap: int, lap_time_s: float
+        pending: dict, *, lap: int, latest_lap: int, lap_time_s: float,
+        latest_lap_end_s: float | None,
     ) -> bool:
         sectors = pending.get("sectors")
+        boundary = pending["counter_events"].get(lap, (None,))[0]
         return bool(
-            lap == latest_lap + 1
-            and pending.get("lap_seq", 0) > pending.get("committed_seq", 0)
-            and pending.get("sectors_seq", 0) > pending.get("committed_seq", 0)
+            lap == latest_lap + 1 and sectors is not None
             and pending.get("sector_lap") == lap
-            and sectors is not None
+            and boundary is not None
+            and all(value is not None and value <= boundary
+                    and (latest_lap_end_s is None or value > latest_lap_end_s)
+                    for value in pending["sector_event_times_s"])
             and math.isclose(sum(sectors), lap_time_s, abs_tol=0.01)
         )
 
@@ -914,6 +1005,8 @@ class LiveSessionStore:
 
         completed_laps = []
         completed_sectors = []
+        provisional_sectors = []
+        live_timing = []
         driver_lookup = {driver.driver_number: driver for driver in drivers}
         timing_numbers = set(self._laps).union(self._pending)
         for number in sorted(timing_numbers):
@@ -921,6 +1014,21 @@ class LiveSessionStore:
             driver = driver_lookup.get(number)
             code = driver.driver_code if driver else number
             team = driver.team if driver else ""
+            registers = self._live_registers.get(number, {})
+            interval = registers.get("IntervalToPositionAhead")
+            if isinstance(interval, Mapping):
+                interval = interval.get("Value")
+            gap = _as_float(registers.get("GapToLeader"))
+            position = _as_int(registers.get("Position"))
+            if (position == 1 and gap is None
+                    and str(registers.get("GapToLeader", "")).upper().startswith("LAP ")):
+                gap = 0.0
+            live_timing.append(LiveTimingState(
+                number, code, _as_int(registers.get("NumberOfLaps")), position,
+                gap, _as_float(interval), registers.get("Position_time"),
+                registers.get("GapToLeader_time"), registers.get("IntervalToPositionAhead_time"),
+                self._latest_source_time_s,
+            ))
             for lap, data in sorted(laps.items()):
                 completed_laps.append(
                     CompletedLap(
@@ -984,14 +1092,26 @@ class LiveSessionStore:
                 or (retirement_lap is not None and pending_lap > retirement_lap)
             ):
                 continue
-            base_cumulative = 0.0
-            if laps:
-                previous_lap = laps.get(pending_lap - 1)
-                if previous_lap is None:
-                    base_cumulative = None
-                else:
-                    base_cumulative = previous_lap.get("cumulative_time_s")
-            if self._is_pending_suspension_lap(number, pending_lap):
+            previous_lap = laps.get(pending_lap - 1)
+            base_cumulative = (
+                previous_lap.get("cumulative_time_s") if previous_lap else None
+            )
+            if (
+                pending_lap == 1
+                and not pending.get("lap")
+                and self._race_time_origin_s is not None
+            ):
+                base_cumulative = 0.0
+            pause_unsafe = self._is_pending_suspension_lap(number, pending_lap)
+            previous_end = previous_lap.get("lap_end_time_s") if previous_lap else None
+            sector_events = pending.get("sector_event_times_s", ())
+            for pause_start, pause_end in self._suspensions:
+                if ((previous_end is None or previous_end < pause_end)
+                        and any(value is not None and value >= pause_start for value in sector_events)):
+                    pause_unsafe = True
+            if self._session_status_state == "suspended":
+                pause_unsafe = True
+            if pause_unsafe:
                 base_cumulative = None
             running = base_cumulative
             tyre = self._tyre_assignment(number, pending_lap)
@@ -1002,8 +1122,12 @@ class LiveSessionStore:
                     break
                 if running is not None:
                     running += sector_time
-                completed_sectors.append(
-                    CompletedSector(
+                elif not pause_unsafe:
+                    # Publication-clock estimate is useful for live progress
+                    # but is never a completed historical coordinate.
+                    running = self._racing_elapsed(sector_events[sector_index - 1])
+                provisional_sectors.append(
+                    ProvisionalSector(
                         number,
                         code,
                         team,
@@ -1019,6 +1143,7 @@ class LiveSessionStore:
                         tyre.get("stint"),
                         tyre.get("fresh_tyre"),
                         pending.get("sectors_session_time_seconds"),
+                        pending.get("sector_event_times_s", [None] * 3)[sector_index - 1],
                     )
                 )
         completed_laps.sort(key=lambda item: (item.lap_number, item.driver_number))
@@ -1042,6 +1167,8 @@ class LiveSessionStore:
                 for sample in self._position_samples[number]
             ),
             self._scheduled_total_laps,
+            tuple(provisional_sectors),
+            tuple(live_timing),
         )
 
 

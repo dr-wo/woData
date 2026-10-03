@@ -76,6 +76,29 @@ class CompletedSector:
 
 
 @dataclass(frozen=True)
+class ProvisionalSector(CompletedSector):
+    """Revisable display estimate; never part of canonical sector history."""
+
+    source_time_s: float | None = None
+
+
+@dataclass(frozen=True)
+class LiveTimingState:
+    """Current official registers and their publication chronology for the UI."""
+
+    driver_number: str
+    driver_code: str
+    completed_laps: int | None = None
+    position: int | None = None
+    gap_to_leader_s: float | None = None
+    interval_to_position_ahead_s: float | None = None
+    position_source_time_s: float | None = None
+    gap_source_time_s: float | None = None
+    interval_source_time_s: float | None = None
+    latest_source_time_s: float | None = None
+
+
+@dataclass(frozen=True)
 class LiveTelemetrySample:
     driver_number: str
     session_time_seconds: float
@@ -120,6 +143,8 @@ class LiveSessionSnapshot:
     telemetry_samples: tuple[LiveTelemetrySample, ...] = ()
     position_samples: tuple[LivePositionSample, ...] = ()
     scheduled_total_laps: int | None = None
+    provisional_sectors: tuple[ProvisionalSector, ...] = ()
+    live_timing: tuple[LiveTimingState, ...] = ()
 
     @classmethod
     def empty(cls) -> "LiveSessionSnapshot":
