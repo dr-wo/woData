@@ -361,9 +361,17 @@ class LiveSessionStore:
         for sample in positions:
             if not isinstance(sample, Mapping):
                 continue
+            # Position batches require their embedded shared clock. Falling back
+            # to a packet timestamp invents simultaneity for undated entries.
+            try:
+                timestamp = datetime.fromisoformat(str(sample.get("Timestamp")).replace("Z", "+00:00"))
+                if timestamp.tzinfo is None:
+                    continue
+            except (TypeError, ValueError):
+                continue
             sample_time = _sample_time_seconds(sample.get("Timestamp"), message)
             entries = sample.get("Entries", {})
-            if sample_time is None or not isinstance(entries, Mapping):
+            if sample_time is None or not math.isfinite(sample_time) or not isinstance(entries, Mapping):
                 continue
             for number, position in entries.items():
                 if not isinstance(position, Mapping):
@@ -376,16 +384,27 @@ class LiveSessionStore:
                 status = position.get("Status")
                 on_track = None if status is None else str(status).lower() in {"ontrack", "0"}
                 latest = self._position_samples.setdefault(str(number), deque())
-                latest.append(
-                    LivePositionSample(str(number), sample_time, x, y, z, on_track)
-                )
+                value = LivePositionSample(str(number), sample_time, x, y, z, on_track)
+                # Embedded sample time, not arrival order, controls retention. A
+                # delayed batch must not evict newer positions or rewind the map.
+                if not latest or sample_time > latest[-1].session_time_seconds:
+                    latest.append(value)
+                else:
+                    by_time = {item.session_time_seconds: item for item in latest}
+                    previous = by_time.get(sample_time)
+                    if previous is not None and previous != value:
+                        # Conflicting values at one timestamp cannot establish a
+                        # common-time position. Preserve an unknown-status marker.
+                        value = LivePositionSample(str(number), sample_time, x, y, z, None)
+                    by_time[sample_time] = value
+                    latest.clear()
+                    latest.extend(by_time[key] for key in sorted(by_time))
+                cutoff = latest[-1].session_time_seconds - 1200.0
+                while latest and latest[0].session_time_seconds < cutoff:
+                    latest.popleft()
                 if self.position_sample_limit is not None:
                     limit = max(int(self.position_sample_limit), 1)
                     while len(latest) > limit:
-                        latest.popleft()
-                else:
-                    cutoff = sample_time - 1200.0
-                    while latest and latest[0].session_time_seconds < cutoff:
                         latest.popleft()
 
     def _trim_telemetry(self, number: str, current_lap: int) -> None:

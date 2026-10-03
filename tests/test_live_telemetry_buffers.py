@@ -90,3 +90,38 @@ def test_embedded_telemetry_timestamp_is_normalized_to_session_clock():
     snapshot = LiveSessionStore().apply(timing_message)
 
     assert snapshot.telemetry_samples[0].session_time_seconds == 102.0
+
+
+def test_position_retention_uses_sample_time_for_delayed_batches():
+    def position(t):
+        from datetime import timedelta
+        return LiveTimingMessage('Position.z', {'Position': [{
+            'Timestamp': (NOW + timedelta(seconds=t)).isoformat(),
+            'Entries': {'1': {'X': t+1, 'Y': 10, 'Z': 1, 'Status': 'OnTrack'}},
+        }]}, NOW, NOW, session_time_seconds=0)
+    store = LiveSessionStore(position_sample_limit=3)
+    for t in [100, 101, 102, 99, 103, 101]: store.reduce(position(t))
+    assert [s.session_time_seconds for s in store.snapshot().position_samples] == [101,102,103]
+    store.reduce(position(1400))
+    assert [s.session_time_seconds for s in store.snapshot().position_samples] == [1400]
+    store.reduce(position(100))
+    assert [s.session_time_seconds for s in store.snapshot().position_samples] == [1400]
+    latest = LiveSessionStore(position_sample_limit=1)
+    for t in [100, 102, 101]: latest.reduce(position(t))
+    assert latest.snapshot().position_samples[0].session_time_seconds == 102
+
+
+def test_position_requires_aware_embedded_time_and_conflicts_remain_unknown():
+    def packet(t, x):
+        return LiveTimingMessage('Position.z', {'Position': [{
+            'Timestamp':t, 'Entries':{'1':{'X':x,'Y':20,'Z':0,'Status':'OnTrack'}},
+        }]}, NOW, NOW, session_time_seconds=0)
+    store=LiveSessionStore(position_sample_limit=3)
+    for t in [None,'invalid','2026-01-01T00:00:01']:
+        store.reduce(packet(t,10))
+    assert store.snapshot().position_samples == ()
+    store.reduce(packet('2026-01-01T00:00:01Z',10))
+    store.reduce(packet('2026-01-01T00:00:01Z',11))
+    store.reduce(packet('2026-01-01T00:00:01Z',11))
+    assert len(store.snapshot().position_samples)==1
+    assert store.snapshot().position_samples[0].on_track is None
