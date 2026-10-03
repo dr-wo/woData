@@ -146,7 +146,12 @@ that wait during stop/reset.
 
 `LiveSessionStore` defaults to a rolling 12-lap `CarData.z` window and a
 time-based 20-minute `Position.z` window. Tests and analysis workers may request
-unbounded telemetry or a fixed position-sample limit. The raw recording remains
+unbounded car telemetry or an additional position-sample limit. woPlanner uses
+one shared track-map/causal-replay policy: at most 6,000 positions per driver
+within the latest 1,200 sample-time seconds. Embedded aware timestamps are
+required; delayed batches cannot rewind the latest position, and conflicting
+samples or unknown status remain unknown. Position-derived traffic is diagnostic
+only; it does not activate production clean-lap gap decisions. The raw recording remains
 the authoritative full-fidelity source whenever an in-memory window has trimmed
 old samples.
 
@@ -305,8 +310,10 @@ Their decoded archive records are stored below the selected session archive as
 replay contains the same canonical messages. During reduction, `CarData.z` becomes
 timestamped speed samples with inferred lap attribution and is retained in a
 rolling 12-lap buffer per driver. `Position.z` becomes a separate XYZ diagnostic
-buffer. The shared traffic calculation consumes the speed buffer and does not wait
-for, merge, or repeatedly rebuild laps from the larger position stream.
+buffer used by the track map and diagnostic position-traffic shadow. The shared
+retrospective traffic evaluator consumes normalized telemetry; default live Race
+traffic is quarantined as `traffic-unavailable`, retains existing model/history,
+and has no automatic sector fallback. Explicit sector mode remains available.
 
 This separation is deliberate. `CarData.z` has the speed channel needed by the
 shared progress integrator, whereas raw XYZ positions require track projection and
