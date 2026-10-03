@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pytest
 
 from wodata import (
     get_cache_path,
@@ -42,12 +43,13 @@ def test_get_data_root_defaults_to_cwd_wodata(monkeypatch, tmp_path):
     assert get_data_root() == tmp_path / "woData"
 
 
-def test_get_data_root_finds_sibling_from_project_checkout(monkeypatch, tmp_path):
+@pytest.mark.parametrize("project", ["woStrategy", "woPlanner", "woWeekend"])
+def test_get_data_root_finds_sibling_from_project_checkout(monkeypatch, tmp_path, project):
     monkeypatch.delenv("WODATA_ROOT", raising=False)
     monkeypatch.delenv("WOSTRATEGY_DATA_ROOT", raising=False)
     (tmp_path / "woData").mkdir()
-    (tmp_path / "woStrategy").mkdir()
-    monkeypatch.chdir(tmp_path / "woStrategy")
+    (tmp_path / project).mkdir()
+    monkeypatch.chdir(tmp_path / project)
 
     assert get_data_root() == tmp_path / "woData"
 

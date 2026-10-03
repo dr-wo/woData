@@ -67,7 +67,7 @@ def get_data_root(explicit_root: str | Path | None = None) -> Path:
 
     cwd = Path.cwd()
     sibling = cwd.parent / "woData"
-    if cwd.name in {"woStrategy", "woPlanner"} and sibling.is_dir():
+    if cwd.name in {"woStrategy", "woPlanner", "woWeekend"} and sibling.is_dir():
         return sibling
     return cwd / "woData"
 
