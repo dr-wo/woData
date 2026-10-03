@@ -106,6 +106,7 @@ class ReplayEvent:
     source: str = REPLAY_SOURCE
     archive_topic_index: int | None = None
     original_timestamp: str | None = None
+    original_received_at: str | None = None
     message_session_time_seconds: float | None = None
     preserve_message_session_time: bool = False
 
@@ -134,6 +135,10 @@ class ReplayEvent:
             original_timestamp=(
                 str(value["original_timestamp"]) if value.get("original_timestamp") else None
             ),
+            original_received_at=(
+                str(value["original_received_at"])
+                if value.get("original_received_at") else None
+            ),
             message_session_time_seconds=(
                 session_time_seconds(value["message_session_time_seconds"])
                 if value.get("message_session_time_seconds") is not None else None
@@ -154,6 +159,8 @@ class ReplayEvent:
             result["archive_topic_index"] = self.archive_topic_index
         if self.original_timestamp is not None:
             result["original_timestamp"] = self.original_timestamp
+        if self.original_received_at is not None:
+            result["original_received_at"] = self.original_received_at
         if self.message_session_time_seconds is not None:
             result["message_session_time_seconds"] = self.message_session_time_seconds
         if self.preserve_message_session_time:

@@ -94,6 +94,11 @@ def load_replay(path: str | Path, *, permissive: bool = False) -> tuple[list[Rep
                                     if value.get("source_timestamp_utc")
                                     else None
                                 ),
+                                original_received_at=(
+                                    str(value["received_at_utc"])
+                                    if value.get("received_at_utc")
+                                    else None
+                                ),
                                 message_session_time_seconds=(
                                     session_time_seconds(recorded_session_time)
                                     if recorded_session_time is not None
@@ -205,7 +210,10 @@ class ReplayPlayer:
                 topic=event.topic,
                 payload=event.payload,
                 source_timestamp_utc=parse_timestamp(event.original_timestamp),
-                received_at_utc=datetime.now(timezone.utc),
+                received_at_utc=(
+                    parse_timestamp(event.original_received_at)
+                    or datetime.now(timezone.utc)
+                ),
                 schema_version=event.schema_version,
                 source=REPLAY_SOURCE,
                 sequence=event.sequence,
