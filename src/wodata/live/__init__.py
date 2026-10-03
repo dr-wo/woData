@@ -3,6 +3,8 @@ from .fastf1_source import LIVE_PHASE_1_TOPICS, FastF1LiveTimingSource
 from .models import (
     CompletedLap,
     CompletedSector,
+    ProvisionalSector,
+    LiveTimingState,
     LiveConnectionStatus,
     LiveDriver,
     LiveMessage,
@@ -43,6 +45,8 @@ from .quali_reducer import PitLaneGeometry, QualiSessionStore
 __all__ = [
     "CompletedLap",
     "CompletedSector",
+    "ProvisionalSector",
+    "LiveTimingState",
     "DrainResult",
     "FastF1LiveTimingSource",
     "LIVE_PHASE_1_TOPICS",
