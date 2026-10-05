@@ -138,6 +138,10 @@ class LiveSessionStore:
         self._live_registers: dict[str, dict] = {}
         self._latest_source_time_s: float | None = None
         self._tyre_stints: dict[str, dict[int, dict]] = {}
+        self._physical_stints: dict[str, list[dict]] = {}
+        self._tyre_pit_boundary: dict[str, int] = {}
+        self._tyre_pit_boundary_time: dict[str, float | None] = {}
+        self._tyre_pit_state: dict[str, dict] = {}
         self._positions: dict[str, int] = {}
         self._laps: dict[str, dict[int, dict]] = {}
         self._retired_after_lap: dict[str, int] = {}
@@ -216,7 +220,7 @@ class LiveSessionStore:
                 message.session_time_seconds,
             )
         elif message.topic == "TimingAppData" and isinstance(payload, Mapping):
-            self._apply_timing_app_data(payload, message.source_timestamp_utc)
+            self._apply_timing_app_data(payload, source_time)
         elif message.topic == "CarData.z":
             self._apply_car_data(message)
         elif message.topic == "Position.z":
@@ -457,6 +461,7 @@ class LiveSessionStore:
                 registers[field] = copy.deepcopy(patch[field])
                 registers[field + "_time"] = event_time
             timing = self._timing.setdefault(number, {})
+            exited_pit = self._update_tyre_pit_boundary(number, patch, event_time)
             _deep_merge(timing, patch)
             position = _as_int(patch.get("Position"))
             if position is not None and position > 0:
@@ -475,8 +480,46 @@ class LiveSessionStore:
             ):
                 self._retired_after_lap.pop(number, None)
             self._update_pending_lap(number, patch, timestamp, session_time_seconds)
+            if exited_pit:
+                self._tyre_pit_boundary[number] = max(
+                    max(self._laps.get(number, {}), default=0),
+                    _as_int(registers.get("NumberOfLaps")) or 0,
+                ) + 1
+                for slot in self._tyre_stints.get(number, {}).values():
+                    if slot.get("fitting_candidate") is not None:
+                        self._reconcile_tyre_slot(number, slot, {}, event_time)
 
-    def _apply_timing_app_data(self, payload: Mapping, timestamp: datetime | None) -> None:
+    def _update_tyre_pit_boundary(
+        self, number: str, patch: Mapping, event_time: float | None,
+    ) -> bool:
+        state = self._tyre_pit_state.setdefault(number, {})
+        entered = exited = False
+        for field in ("InPit", "PitOut"):
+            if field not in patch:
+                continue
+            previous_time = state.get(field + "_time")
+            if event_time is not None and previous_time is not None and event_time < previous_time:
+                continue
+            previous = state.get(field)
+            value = _as_bool(patch[field])
+            entered |= field == "InPit" and value is True and previous is not True
+            exited |= ((field == "PitOut" and value is True and previous is not True)
+                       or (field == "InPit" and value is False and previous is True))
+            state[field] = value
+            state[field + "_time"] = event_time
+        if entered or (exited and not state.get("awaiting_exit")):
+            state["visit"] = self._sequence
+            self._tyre_pit_boundary_time[number] = event_time
+            self._tyre_pit_boundary[number] = max(self._laps.get(number, {}), default=0) + 1
+        if entered:
+            state["awaiting_exit"] = True
+        if exited:
+            state["awaiting_exit"] = False
+        return exited
+
+    def _apply_timing_app_data(
+        self, payload: Mapping, event_time: float | None = None,
+    ) -> None:
         lines = payload.get("Lines", payload)
         if not isinstance(lines, Mapping):
             return
@@ -489,45 +532,147 @@ class LiveSessionStore:
             if not isinstance(updates, Mapping):
                 continue
             number = str(number)
-            driver_stints = self._tyre_stints.setdefault(number, {})
-            for stint_index, patch in updates.items():
-                if not isinstance(patch, Mapping):
+            slots = self._tyre_stints.setdefault(number, {})
+            for index, patch in updates.items():
+                index = _as_int(index)
+                if index is None or index < 0 or not isinstance(patch, Mapping):
                     continue
-                parsed_index = _as_int(stint_index)
-                if parsed_index is None or parsed_index < 0:
+                slot = slots.setdefault(index, {})
+                before = slot.copy()
+                field_times = slot.setdefault("field_times", {})
+                patch = {
+                    key: value for key, value in patch.items()
+                    if event_time is None or field_times.get(key) is None
+                    or event_time >= field_times[key]
+                }
+                if not patch:
                     continue
-                if parsed_index not in driver_stints:
-                    completed_lap = max(self._laps.get(number, {}), default=0)
-                    driver_stints[parsed_index] = {
-                        "fitted_lap": completed_lap + 1,
-                        "timestamp": timestamp,
-                    }
-                    if parsed_index > 0 and completed_lap in self._laps.get(number, {}):
-                        self._laps[number][completed_lap]["pit_in"] = True
-                _deep_merge(driver_stints[parsed_index], patch)
+                _deep_merge(slot, patch)
+                if any(key in patch for key in ("Compound", "StartLaps", "New", "TotalLaps")):
+                    slot.setdefault("introduced_lap", max(self._laps.get(number, {}), default=0) + 1)
+                    slot.setdefault("introduced_time", event_time)
+                for key in patch:
+                    field_times[key] = event_time
+                total = _as_int(patch.get("TotalLaps"))
+                previous_total = _as_int(before.get("TotalLaps"))
+                if total is not None and (not before or
+                        (previous_total is not None and total < previous_total)):
+                    slot["reset_pending"] = True
+                self._reconcile_tyre_slot(number, slot, patch, event_time)
+
+    def _reconcile_tyre_slot(
+        self, number: str, slot: dict, patch: Mapping, event_time: float | None,
+    ) -> None:
+        # Slots are mutable metadata views, never permanent physical identities.
+        compound = str(slot.get("Compound") or "").upper()
+        generations = self._physical_stints.setdefault(number, [])
+        current = generations[-1] if generations else None
+        completed = max(self._laps.get(number, {}), default=0)
+        start = _as_int(slot.get("StartLaps"))
+        total = _as_int(slot.get("TotalLaps"))
+        boundary = self._tyre_pit_boundary.get(number)
+        boundary = boundary if current and boundary and boundary > current["fitted_lap"] else None
+        evidence_time = (self._tyre_pit_boundary_time.get(number) if boundary is not None
+                         else current.get("event_time") if current else None)
+        if event_time is not None and evidence_time is not None and event_time < evidence_time:
+            # A previously missing historical field may merge into its slot,
+            # but it is not evidence for a later fitting boundary.
+            return
+        metadata = any(key in patch for key in ("Compound", "StartLaps", "New", "TyresNotChanged"))
+        if boundary is not None:
+            candidate = slot.get("fitting_candidate")
+            visit = self._tyre_pit_state.get(number, {}).get("visit")
+            if candidate is None or candidate["visit"] != visit:
+                candidate = {"visit": visit, "totals": set(), "metadata": False}
+                slot["fitting_candidate"] = candidate
+            candidate["metadata"] |= metadata
+            if "TyresNotChanged" in patch:
+                candidate["no_change"] = _as_bool(patch["TyresNotChanged"]) is True
+            if "TotalLaps" in patch and total is not None:
+                candidate["totals"].add(total)
+        else:
+            candidate = None
+        fitted = start is not None and (
+            start in candidate["totals"] if candidate is not None else total == start
+        )
+        reset = fitted and slot.get("reset_pending", False)
+        if compound in ("", "UNKNOWN"):
+            return
+        if current is not None and self._tyre_pit_state.get(number, {}).get("awaiting_exit"):
+            return
+        no_change = (_as_bool(patch.get("TyresNotChanged")) is True
+                     or (candidate is not None and candidate.get("no_change", False)))
+        # An explicit no-change patch is evidence about this visit only; an old
+        # merged flag must not veto later reuse of the slot.
+        if no_change:
+            self._tyre_pit_boundary.pop(number, None)
+            slot["reset_pending"] = False
+        unowned = "generation" not in slot
+        transition = current is None or (
+            not no_change and completed >= current["fitted_lap"]
+            and ((fitted and candidate is not None and candidate["metadata"])
+                 or (reset and metadata)
+                 or (unowned and (metadata or (candidate is not None and candidate["metadata"]))
+                     and total is None and start is not None))
+        )
+        if transition:
+            fitted_lap = boundary or (
+                slot.get("introduced_lap", completed + 1) if unowned and total is None
+                else completed + 1
+            )
+            current = {
+                "stint": len(generations) + 1,
+                "event_time": (self._tyre_pit_boundary_time.get(number) if boundary is not None
+                               else slot.get("introduced_time") if unowned else event_time),
+                "fitted_lap": fitted_lap,
+                "Compound": compound,
+                "StartLaps": start,
+                "New": slot.get("New"),
+            }
+            generations.append(current)
+            slot["generation"] = current["stint"]
+            slot["reset_pending"] = False
+            self._tyre_pit_boundary.pop(number, None)
+            if len(generations) > 1 and fitted_lap - 1 in self._laps.get(number, {}):
+                self._laps[number][fitted_lap - 1]["pit_in"] = True
+        elif current is not None:
+            # Compatible remappings (including lower slots) alias the current
+            # physical stint. TotalLaps can arrive before its timing counter.
+            age = (current.get("StartLaps") or 0) + completed - current["fitted_lap"] + 1
+            compatible = compound == current["Compound"] and total in (age, age + 1)
+            if metadata and compatible:
+                slot["generation"] = current["stint"]
+                slot["reset_pending"] = False
+            if slot.get("generation") != current["stint"] or not metadata:
+                return
+            # A reset/UNKNOWN staging patch awaits fitting metadata. Do not
+            # rewrite the previous stint using a partially described new tyre.
+            if boundary is not None or (slot.get("reset_pending") and not no_change):
+                return
+            current["Compound"] = compound
+            for key in ("StartLaps", "New"):
+                if key in patch:
+                    current[key] = _as_int(patch[key]) if key == "StartLaps" else patch[key]
+        # Delayed metadata repairs only the owned interval, never earlier tyres.
+        if current is not None:
+            for lap, data in self._laps.get(number, {}).items():
+                if lap >= current["fitted_lap"]:
+                    data.update(self._tyre_assignment(number, lap))
 
     def _tyre_assignment(self, number: str, lap: int) -> dict[str, object]:
-        candidates = [
-            (index, stint)
-            for index, stint in self._tyre_stints.get(number, {}).items()
-            if int(stint.get("fitted_lap", 1)) <= lap
-        ]
+        candidates = [data for data in self._physical_stints.get(number, [])
+                      if data["fitted_lap"] <= lap]
         if not candidates:
             return {"compound": None, "tyre_life": None, "stint": None, "fresh_tyre": None}
-        stint_index, data = max(candidates, key=lambda item: item[0])
-        start_laps = _as_int(data.get("StartLaps")) or 0
-        stint_number = stint_index + 1
-        completed_on_stint = sum(
-            1
-            for completed in self._laps.get(number, {}).values()
-            if completed.get("stint") == stint_number
-        )
+        data = candidates[-1]
+        start_laps = data.get("StartLaps")
         return {
-            "compound": str(data["Compound"]).upper() if data.get("Compound") else None,
-            "tyre_life": float(start_laps + completed_on_stint + 1),
-            "stint": stint_number,
+            "compound": data["Compound"],
+            "tyre_life": (float(start_laps + lap - data["fitted_lap"] + 1)
+                          if start_laps is not None else None),
+            "stint": data["stint"],
             "fresh_tyre": _as_bool(data.get("New")),
-            "pit_out": bool(stint_index > 0 and int(data.get("fitted_lap", 1)) == lap),
+            "pit_out": bool(data["stint"] > 1 and data["fitted_lap"] == lap),
         }
 
     def _update_pending_lap(

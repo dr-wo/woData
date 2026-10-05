@@ -130,6 +130,65 @@ The optional `wodata.live` package provides authenticated FastF1 live ingestion,
 mandatory raw recording, deterministic replay, completed-lap state reduction, and
 sector-level timing when the live feed includes `TimingData.Lines[*].Sectors`.
 
+### R16 DBG-8: mutable tyre slots
+
+**Status: CLOSED.**
+
+`TimingAppData.Stints` indices are mutable feed views, not physical stint IDs.
+The old reducer permanently attached fitted history to each index and selected
+its numeric maximum. Reusing HAM's SOFT slot for MEDIUM therefore inherited
+31 earlier laps; RUS's lower-slot SOFT update lost to a stale MEDIUM slot.
+
+The reducer now allocates physical stint IDs independently. Compatible
+compound/age remappings preserve ownership; fitting evidence (a pit visit
+with resolved metadata and an observed `TotalLaps == StartLaps`, or
+an explicit counter reset/new-stint description) creates new ownership, even
+for the same compound. Candidate evidence is collected from pit entry and resolved at the exit lap,
+keeping the in-lap on the old tyres. It survives partial patches and later
+counter advancement; historical source timestamps cannot prove a later fitting. Routine historical totals/lap-time updates cannot select
+a stale stint. An explicit `TyresNotChanged=1` suppresses a replacement; a flag
+inherited from an old slot does not. Prior `StartLaps` is preserved without an
+age cap. Age follows the physical fitted-lap boundary, including missing timing
+laps, rather than the number of previously stored rows sharing a slot index.
+Source-time merging is per field; reset clears all ownership and candidates.
+Delayed metadata repairs only its owned lap interval.
+
+Both the original R16 live recording and the archive replay verify:
+
+| Checkpoint | Before | After (Planner label) |
+| --- | --- | --- |
+| HAM L32 | MEDIUM life 34 | MEDIUM life 4 (**3**) |
+| RUS L32 | MEDIUM life 23 | MEDIUM life 23 (**22**) |
+| RUS L33 | MEDIUM life 24 | SOFT life 4 (**3**) |
+| RUS L45 | SOFT life 39, reused identity | SOFT life 4, new physical stint (**3**) |
+
+`tests/test_live_tyre_reconciliation.py` covers these incidents, high prior use,
+normal progression, aliases/stale slots, same-compound replacements, split and
+delayed metadata, source ordering, reset, and recorder/replay equivalence.
+`tests/fixtures/r16_mutable_tyres.jsonl` contains 189 original ordered HAM/RUS
+TimingData/TimingAppData projections through recording sequence 67923, from
+`wodata/live_timing/schema_v1/year=2026/round=16/session=R/live_timing_raw.jsonl`.
+It retains all stint patches and lap/pit evidence, plus original clocks and
+sequence IDs; other drivers, sectors and unrelated fields are omitted. Optional
+integration cases replay the complete local live recording and archive.
+
+No Planner compensation is required: completed laps/sectors and provisional
+sectors publish the same physical ownership contract, used by display,
+tyre-change events, clean-lap grouping, Race model inputs and strategy state.
+An unobserved same-compound replacement with no pit/reset/new-slot evidence
+cannot be inferred. A compound-only correction without fitting evidence is
+metadata correction, not a claimed replacement. An initially incomplete or
+late-joined multi-slot snapshot cannot establish unobserved stint history;
+missing prior usage remains unknown until supplied. No R16-specific rules or
+numeric age thresholds are used.
+
+Validation (2026-10-05): 174 relevant woData reducer/controller/replay/recovery,
+telemetry and R13/R14/R15 tests pass, as do 146 Planner live service,
+analysis, tyre-input and GUI tests. Independent read-only review found and
+verified fixes for split metadata, advancing counters, stale missing-field
+provenance, metadata during pit visits, and no-total exit resolution; its final
+reducer/reconciliation run passed 86 tests with no remaining substantive finding.
+
 ### Live reduction and worker boundary
 
 The live controller now distinguishes planner-state topics from high-volume
