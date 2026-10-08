@@ -54,6 +54,9 @@ class CompletedLap:
     pit_out: bool = False
     pit_in: bool = False
     is_valid: bool = True
+    # Paired adjacent in/out laps from an observed racing InPit visit. Inferred
+    # tyre-change pit flags alone never establish this evidence.
+    racing_pit_stop_id: int | None = None
 
 
 @dataclass(frozen=True)

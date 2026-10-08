@@ -142,6 +142,7 @@ class LiveSessionStore:
         self._tyre_pit_boundary: dict[str, int] = {}
         self._tyre_pit_boundary_time: dict[str, float | None] = {}
         self._tyre_pit_state: dict[str, dict] = {}
+        self._racing_pit_laps: dict[str, dict[int, int]] = {}
         self._positions: dict[str, int] = {}
         self._laps: dict[str, dict[int, dict]] = {}
         self._retired_after_lap: dict[str, int] = {}
@@ -209,6 +210,9 @@ class LiveSessionStore:
             status = payload.get("Status")
             if status is not None:
                 self._current_track_status = str(status)
+                if "5" in str(status):
+                    for state in self._tyre_pit_state.values():
+                        state["racing_entry"] = False
                 for pending in self._pending.values():
                     pending.setdefault("track_statuses", set()).add(str(status))
         elif message.topic == "DriverList" and isinstance(payload, Mapping):
@@ -266,6 +270,8 @@ class LiveSessionStore:
             return False
         if normalized == "aborted":
             self._has_observed_abort = True
+            for state in self._tyre_pit_state.values():
+                state["racing_entry"] = False
             if self._session_status_state == "suspended":
                 self._last_session_status_event_s = event_time_s
                 return True
@@ -485,6 +491,13 @@ class LiveSessionStore:
                     max(self._laps.get(number, {}), default=0),
                     _as_int(registers.get("NumberOfLaps")) or 0,
                 ) + 1
+                state = self._tyre_pit_state[number]
+                if state.pop("racing_exit", False):
+                    in_lap = self._tyre_pit_boundary[number] - 1
+                    if in_lap > 0:
+                        evidence = self._racing_pit_laps.setdefault(number, {})
+                        evidence[in_lap] = state["visit"]
+                        evidence[in_lap + 1] = state["visit"]
                 for slot in self._tyre_stints.get(number, {}).values():
                     if slot.get("fitting_candidate") is not None:
                         self._reconcile_tyre_slot(number, slot, {}, event_time)
@@ -513,7 +526,19 @@ class LiveSessionStore:
             self._tyre_pit_boundary[number] = max(self._laps.get(number, {}), default=0) + 1
         if entered:
             state["awaiting_exit"] = True
+            state["racing_entry"] = bool(
+                event_time is not None
+                and self._session_status_state == "running"
+                and "5" not in str(self._current_track_status or "")
+            )
         if exited:
+            state["racing_exit"] = bool(
+                state.get("racing_entry")
+                and event_time is not None
+                and self._session_status_state == "running"
+                and "5" not in str(self._current_track_status or "")
+            )
+            state["racing_entry"] = False
             state["awaiting_exit"] = False
         return exited
 
@@ -1220,6 +1245,7 @@ class LiveSessionStore:
                         bool(data.get("pit_out", False)),
                         bool(data.get("pit_in", False)),
                         bool(data.get("is_valid", True)),
+                        self._racing_pit_laps.get(number, {}).get(lap),
                     )
                 )
                 sector_times = data.get("sector_times_s")
