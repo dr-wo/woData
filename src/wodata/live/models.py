@@ -6,6 +6,8 @@ from types import MappingProxyType
 from typing import Literal, Mapping
 
 
+from .race_control import RaceControlEvent
+
 @dataclass(frozen=True)
 class PublicationTime:
     """Original source coordinate, never a receive clock or a unique event ID.
@@ -184,6 +186,7 @@ class LiveSessionSnapshot:
     scheduled_total_laps: int | None = None
     provisional_sectors: tuple[ProvisionalSector, ...] = ()
     live_timing: tuple[LiveTimingState, ...] = ()
+    race_control_events: tuple[RaceControlEvent, ...] = ()
 
     @classmethod
     def empty(cls) -> "LiveSessionSnapshot":

@@ -63,6 +63,7 @@ PLANNER_CHANGE_BY_TOPIC = {
     "TimingAppData": "tyres",
     "TrackStatus": "track_status",
     "LapCount": "lap_count",
+    "RaceControlMessages": "race_control",
 }
 
 
@@ -111,7 +112,7 @@ class LiveTimingController:
         self._start_source(
             FastF1LiveTimingSource(
                 timeout=config.timeout, no_auth=config.no_auth, logger=self.logger,
-                extra_topics=("RaceControlMessages",) if isinstance(self.store, QualiSessionStore) else (),
+                extra_topics=("RaceControlMessages",),
             ),
             reset_store=False,
         )

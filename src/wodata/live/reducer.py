@@ -22,6 +22,8 @@ from .models import (
     LivePositionSample,
 )
 
+from .race_control import RaceControlHistory
+
 SECTOR_NAMES = ("S1", "S2", "S3")
 
 
@@ -130,6 +132,7 @@ class LiveSessionStore:
 
     def reset(self) -> None:
         self._session_info: dict[str, object] = {}
+        self._race_control_history = RaceControlHistory()
         self._session_status: str | None = None
         self._current_track_status: str | None = None
         self._scheduled_total_laps: int | None = None
@@ -215,6 +218,16 @@ class LiveSessionStore:
                         state["racing_entry"] = False
                 for pending in self._pending.values():
                     pending.setdefault("track_statuses", set()).add(str(status))
+        elif message.topic == "RaceControlMessages" and isinstance(payload, Mapping):
+            # Retain the original source coordinate; receipt/playback clocks
+            # cannot order corrections to historical notices.
+            publication_time = (
+                ("session", float(message.session_time_seconds))
+                if message.session_time_seconds is not None else
+                ("utc", message.source_timestamp_utc.timestamp())
+                if message.source_timestamp_utc is not None else None
+            )
+            self._race_control_history.apply(payload, publication_time)
         elif message.topic == "DriverList" and isinstance(payload, Mapping):
             self._apply_driver_list(payload, message.source_timestamp_utc)
         elif message.topic == "TimingData" and isinstance(payload, Mapping):
@@ -1366,6 +1379,7 @@ class LiveSessionStore:
             self._scheduled_total_laps,
             tuple(provisional_sectors),
             tuple(live_timing),
+            self._race_control_history.snapshot(),
         )
 
 
