@@ -212,7 +212,8 @@ def test_faults_are_seeded_filtered_delayed_and_do_not_modify_file(tmp_path):
     assert projection(first) == projection(second)
     assert result_a == result_b
     assert all(item.topic != "WeatherData" for item in first)
-    assert all(item.session_time_seconds == 6 for item in first if item.topic == "TimingAppData")
+    assert all(item.session_time_seconds == 1 for item in first if item.topic == "TimingAppData")
+    assert all(item.playback_time_seconds == 6 for item in first if item.topic == "TimingAppData")
     assert path.read_bytes() == original
 
 

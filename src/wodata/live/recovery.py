@@ -12,7 +12,7 @@ from .models import LiveTimingMessage
 from .replay.player import parse_recorded_line
 from .replay.schema import parse_timestamp
 
-RECOVERY_SCHEMA_VERSION = 2
+RECOVERY_SCHEMA_VERSION = 3
 CANONICAL_REPLAY_NAME = "recovered_replay.jsonl"
 RECOVERY_MANIFEST_NAME = "recovered_replay_manifest.json"
 
@@ -24,6 +24,7 @@ class RecordedMessage:
     source_order: int
     fingerprint: str
     has_envelope: bool = False
+    envelope_copy_fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -130,7 +131,9 @@ def _write_canonical(path: Path, messages: list[RecordedMessage]) -> None:
         previous = 0.0
         for sequence, item in enumerate(messages, 1):
             message = item.message
-            seconds = message.session_time_seconds
+            seconds = message.playback_time_seconds
+            if seconds is None:
+                seconds = message.session_time_seconds
             if seconds is None and message.source_timestamp_utc is not None:
                 seconds = message.source_timestamp_utc.timestamp()
             seconds = max(float(seconds if seconds is not None else sequence), previous)
@@ -141,6 +144,11 @@ def _write_canonical(path: Path, messages: list[RecordedMessage]) -> None:
                 "sequence": sequence, "source": "recovered_live",
                 "message_session_time_seconds": message.session_time_seconds,
                 "preserve_message_session_time": True,
+                "original_received_at": message.received_at_utc.isoformat(),
+                "received_at_is_trusted": (
+                    message.received_at_is_trusted if message.received_at_is_trusted is not None
+                    else message.source == "signalr_live"
+                ),
             }
             if message.source_timestamp_utc is not None:
                 record["original_timestamp"] = message.source_timestamp_utc.isoformat()
@@ -162,10 +170,21 @@ def load_recording(path: str | Path) -> list[RecordedMessage]:
         for source_order, line in enumerate(source, 1):
             if not line.strip():
                 continue
+            envelope_copy_fingerprint = None
             if is_jsonl:
                 payload = json.loads(line)
                 if not isinstance(payload, Mapping):
                     raise TypeError(f"JSONL record {source_order} in {path} is not an object")
+                # Only actual recorded metadata can certify an envelope copy;
+                # synthesized receive times/line numbers cannot do so.
+                recorded_sequence = payload.get("sequence")
+                if (parse_timestamp(payload.get("received_at_utc")) is not None
+                        and isinstance(recorded_sequence, int)
+                        and not isinstance(recorded_sequence, bool)):
+                    envelope_copy_fingerprint = _fingerprint({
+                        key: value for key, value in payload.items()
+                        if key != "playback_time_seconds"
+                    })
                 topic = str(payload["topic"])
                 value = payload.get("payload")
                 source_timestamp = parse_timestamp(payload.get("source_timestamp_utc"))
@@ -183,6 +202,10 @@ def load_recording(path: str | Path) -> list[RecordedMessage]:
                     source=str(payload.get("source") or "signalr_live"),
                     sequence=int(payload.get("sequence") or source_order),
                     session_time_seconds=_optional_float(payload.get("session_time_seconds")),
+                    playback_time_seconds=_optional_float(payload.get("playback_time_seconds")),
+                    received_at_is_trusted=(payload.get("received_at_is_trusted")
+                                           if parse_timestamp(payload.get("received_at_utc")) is not None
+                                           else False),
                 )
             else:
                 topic, value, source_timestamp = parse_recorded_line(line.strip())
@@ -194,6 +217,7 @@ def load_recording(path: str | Path) -> list[RecordedMessage]:
                     or datetime.fromtimestamp(path.stat().st_mtime, timezone.utc),
                     source="signalr_live",
                     sequence=source_order,
+                    received_at_is_trusted=False,
                 )
             messages.append(
                 RecordedMessage(
@@ -202,14 +226,36 @@ def load_recording(path: str | Path) -> list[RecordedMessage]:
                     source_order,
                     message_fingerprint(message),
                     has_envelope=is_jsonl,
+                    envelope_copy_fingerprint=envelope_copy_fingerprint,
                 )
             )
     return messages
 
 
 def message_fingerprint(message: LiveTimingMessage) -> str:
+    """Content in its genuine source coordinate, never its delivery schedule."""
+    publication = message.publication_time
+    return _fingerprint({
+        "topic": message.topic, "payload": message.payload,
+        "publication": ((publication.coordinate, publication.seconds) if publication else None),
+    })
+
+
+def _recovery_identity(item: RecordedMessage) -> tuple:
+    if item.message.publication_time is not None:
+        return ("publication", item.fingerprint)
+    if item.envelope_copy_fingerprint is not None:
+        # This identifies copies across recovery inputs, not a historical
+        # occurrence. Repetitions within any one input are retained by counts.
+        return ("envelope_copy", item.envelope_copy_fingerprint)
+    # Without original time or a complete recorded envelope, only another copy
+    # of this same physical record is known to be redundant.
+    return ("record", str(item.path.resolve()), item.source_order)
+
+
+def _fingerprint(value: object) -> str:
     canonical = json.dumps(
-        {"topic": message.topic, "payload": message.payload},
+        value,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
@@ -262,19 +308,20 @@ def merge_recordings(recordings: Iterable[list[RecordedMessage]]) -> list[Record
     output: list[RecordedMessage] = []
     for phase in phases:
         backbone = phased[0].get(phase, ())
-        emitted = Counter(item.fingerprint for item in backbone)
+        emitted = Counter(_recovery_identity(item) for item in backbone)
         # Add only observations not already represented the same number of
         # times in the canonical capture. Occurrence counts retain A,B,A-style
         # corrections while removing cross-process duplicates.
         additions: list[RecordedMessage] = []
         for buckets in reversed(phased[1:]):
-            occurrences: Counter[str] = Counter()
+            occurrences: Counter[tuple] = Counter()
             for item in buckets.get(phase, ()):
-                occurrences[item.fingerprint] += 1
-                if occurrences[item.fingerprint] <= emitted[item.fingerprint]:
+                identity = _recovery_identity(item)
+                occurrences[identity] += 1
+                if occurrences[identity] <= emitted[identity]:
                     continue
                 additions.append(item)
-                emitted[item.fingerprint] += 1
+                emitted[identity] += 1
         # Secondary observations are applied first so the longest capture's
         # state at this race phase remains authoritative while unique partial
         # fields from secondary processes survive its incremental patches.
@@ -299,11 +346,18 @@ def _merge_envelope_recordings(
             )
     ordered.sort(key=lambda value: value[:3])
     output = []
-    for *_key, item in ordered:
-        # Only adjacent identical observations are certainly duplicates. A
-        # repeated A after an intervening B remains a meaningful correction.
-        if output and output[-1].fingerprint == item.fingerprint:
+    emitted: Counter[tuple] = Counter()
+    occurrences = [Counter() for _source in sources]
+    for _time, source_index, _order, item in ordered:
+        identity = _recovery_identity(item)
+        occurrences[source_index][identity] += 1
+        occurrence = occurrences[source_index][identity]
+        # Deduplicate overlapping inputs, not observations within one capture.
+        # Content equality alone cannot remove a clear/boundary. Even identical
+        # envelopes repeated within a capture retain their observed multiplicity.
+        if occurrence <= emitted[identity]:
             continue
+        emitted[identity] = occurrence
         output.append(item)
     return output
 

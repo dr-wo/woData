@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
@@ -61,6 +61,7 @@ class ArchiveRecord:
     payload: dict[str, Any]
     source_order: int
     original_timestamp: str | None = None
+    publication_time_known: bool = True
 
     def __post_init__(self) -> None:
         if not self.topic:
@@ -78,6 +79,8 @@ class ArchiveRecord:
         }
         if self.original_timestamp is not None:
             result["original_timestamp"] = self.original_timestamp
+        if not self.publication_time_known:
+            result["publication_time_known"] = False
         return result
 
     @classmethod
@@ -90,6 +93,7 @@ class ArchiveRecord:
             session_time_seconds=session_time_seconds(value.get("session_time_seconds")),
             payload=payload,
             source_order=int(value.get("source_order", 0)),
+            publication_time_known=bool(value.get("publication_time_known", True)),
             original_timestamp=(
                 str(value["original_timestamp"]) if value.get("original_timestamp") else None
             ),
@@ -98,6 +102,13 @@ class ArchiveRecord:
 
 @dataclass(frozen=True)
 class ReplayEvent:
+    """Playback schedule plus an immutable original message clock.
+
+    Legacy archive constructors/files supply only session_time_seconds. Capture
+    that source coordinate at construction, before any scheduling transform.
+    preserve_message_session_time=True also preserves an explicitly unknown
+    source coordinate (None), as required for live recordings and snapshots.
+    """
     topic: str
     payload: Any
     session_time_seconds: float
@@ -109,6 +120,19 @@ class ReplayEvent:
     original_received_at: str | None = None
     message_session_time_seconds: float | None = None
     preserve_message_session_time: bool = False
+    received_at_is_trusted: bool | None = None
+    # Cache the original receipt parse. Playback-only dataclass replacements
+    # carry this value unchanged; a fallback is never stored as parsed receipt.
+    parsed_received_at: datetime | None = field(default=None, repr=False, compare=False)
+    _receipt_parsed: bool = field(default=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if not self._receipt_parsed:
+            object.__setattr__(self, "parsed_received_at", parse_timestamp(self.original_received_at))
+            object.__setattr__(self, "_receipt_parsed", True)
+        if not self.preserve_message_session_time:
+            object.__setattr__(self, "message_session_time_seconds", self.session_time_seconds)
+            object.__setattr__(self, "preserve_message_session_time", True)
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ReplayEvent":
@@ -144,6 +168,7 @@ class ReplayEvent:
                 if value.get("message_session_time_seconds") is not None else None
             ),
             preserve_message_session_time=bool(value.get("preserve_message_session_time", False)),
+            received_at_is_trusted=value.get("received_at_is_trusted"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -161,6 +186,8 @@ class ReplayEvent:
             result["original_timestamp"] = self.original_timestamp
         if self.original_received_at is not None:
             result["original_received_at"] = self.original_received_at
+        if self.received_at_is_trusted is not None:
+            result["received_at_is_trusted"] = self.received_at_is_trusted
         if self.message_session_time_seconds is not None:
             result["message_session_time_seconds"] = self.message_session_time_seconds
         if self.preserve_message_session_time:

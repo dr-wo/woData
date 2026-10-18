@@ -6,7 +6,7 @@ import queue
 import threading
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .fastf1_source import FastF1LiveTimingSource
@@ -219,6 +219,12 @@ class LiveTimingController:
                 self._recorder.close()
 
     def _enqueue_message(self, message: LiveTimingMessage) -> None:
+        # Capture adapter receipt before recorder/sink work or queue backlog.
+        # Production SignalR already captures it at the source callback.
+        if (isinstance(self._source, FastF1LiveTimingSource)
+                and message.source == "signalr_live"
+                and message.received_at_monotonic_s is None):
+            message = replace(message, received_at_monotonic_s=time.monotonic())
         if self._recorder is not None:
             self._recorder.write(message)
         if self._telemetry_sink is not None:

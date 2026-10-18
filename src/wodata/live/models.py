@@ -7,7 +7,28 @@ from typing import Literal, Mapping
 
 
 @dataclass(frozen=True)
+class PublicationTime:
+    """Original source coordinate, never a receive clock or a unique event ID.
+
+    Session-relative and UTC coordinates are deliberately not interchangeable.
+    Multiple publications can share a coordinate; consumers must retain ambiguity.
+    """
+
+    coordinate: Literal["session", "utc"]
+    seconds: float
+
+
+@dataclass(frozen=True)
 class LiveTimingMessage:
+    """Immutable timing envelope.
+
+    session_time_seconds is the original source session coordinate, if supplied.
+    source_timestamp_utc is the original feed timestamp. Neither is a playback
+    clock. received_at_utc is adapter arrival (or preserved recorded arrival),
+    and sequence is local delivery order; neither certifies historical ownership.
+    Unknown-origin snapshots can update live registers, but are not publications
+    with a known occurrence time. playback_time_seconds is scheduler-only.
+    """
     topic: str
     payload: object
     source_timestamp_utc: datetime | None
@@ -16,6 +37,21 @@ class LiveTimingMessage:
     source: Literal["signalr_live", "f1_archive_replay", "synthetic_test"] = "signalr_live"
     sequence: int = 0
     session_time_seconds: float | None = None
+    playback_time_seconds: float | None = None
+    # Explicit provenance for preserved recording receipts. Replay-generated
+    # adapter wall time is never telemetry delivery evidence.
+    received_at_is_trusted: bool | None = None
+    # Runtime-only live receipt coordinate, captured before queueing. Never
+    # serialised or manufactured by replay execution.
+    received_at_monotonic_s: float | None = None
+
+    @property
+    def publication_time(self) -> PublicationTime | None:
+        if self.session_time_seconds is not None:
+            return PublicationTime("session", float(self.session_time_seconds))
+        if self.source_timestamp_utc is not None:
+            return PublicationTime("utc", self.source_timestamp_utc.timestamp())
+        return None
 
 
 # Source-neutral name used by new integrations; retain LiveTimingMessage for

@@ -18,7 +18,7 @@ DEFAULT_TOPIC_PRIORITY = (
     "TimingAppData", "TimingData", "RaceControlMessages", "WeatherData", "Heartbeat",
     "CarData.z", "Position.z",
 )
-BUILDER_VERSION = "1.0"
+BUILDER_VERSION = "1.1"
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,9 @@ def merge_records(
             sequence=index,
             archive_topic_index=record.source_order,
             original_timestamp=record.original_timestamp,
+            message_session_time_seconds=(record.session_time_seconds
+                                          if record.publication_time_known else None),
+            preserve_message_session_time=True,
         )
         for index, record in enumerate(ordered, 1)
     ]

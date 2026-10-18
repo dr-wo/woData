@@ -43,10 +43,10 @@ SCRIPT_CONFIG = {
     "workflow": FETCH_REPLAY_DATA,
     "year": 2026,
     # Round number is the normal identifier; an event name is not required.
-    "round_number": 14,
+    "round_number": 15,
     # Optional fallback when round_number=None, e.g. "Hungary".
     "event": None,
-    "session": "Q",
+    "session": "FP1",
     # None uses WODATA_ROOT, WOSTRATEGY_DATA_ROOT, then this woData project root.
     "data_root": None,
     # Archive stages. Any combination is allowed.

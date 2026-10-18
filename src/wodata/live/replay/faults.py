@@ -46,6 +46,8 @@ def apply_faults(
             dropped += 1
             continue
         delay = float(config.topic_delay_seconds.get(event.topic, 0.0))
+        # ReplayEvent captured the original message clock on construction.
+        # Shift only the scheduling coordinate, including on repeated transforms.
         shifted = replace(event, session_time_seconds=event.session_time_seconds + delay)
         if delay:
             delayed += 1

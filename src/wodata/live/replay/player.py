@@ -51,6 +51,14 @@ def parse_recorded_line(line: str) -> tuple[str, object, datetime | None]:
 
 
 def load_replay(path: str | Path, *, permissive: bool = False) -> tuple[list[ReplayEvent], int]:
+    """Load recordings with explicit receipt provenance validation.
+
+    Strict mode rejects missing/malformed receipts when a schema-2 or legacy
+    canonical live source (without an explicit untrusted flag), or an explicit
+    true flag, claims a genuine receipt. Trust flags must be JSON booleans or
+    null. Permissive mode retains these records as untrusted. Older archives
+    without a genuine-receipt claim remain valid in both modes.
+    """
     path = Path(path)
     events: list[ReplayEvent] = []
     invalid = 0
@@ -72,7 +80,10 @@ def load_replay(path: str | Path, *, permissive: bool = False) -> tuple[list[Rep
                         if recording_origin is None and clock is not None:
                             recording_origin = clock
                         recorded_session_time = value.get("session_time_seconds")
+                        recorded_playback_time = value.get("playback_time_seconds")
                         timeline_seconds = (
+                            session_time_seconds(recorded_playback_time)
+                            if recorded_playback_time is not None else
                             session_time_seconds(recorded_session_time)
                             if recorded_session_time is not None
                             else (
@@ -81,46 +92,65 @@ def load_replay(path: str | Path, *, permissive: bool = False) -> tuple[list[Rep
                                 else float(len(events))
                             )
                         )
-                        events.append(
-                            ReplayEvent(
-                                topic=str(value.get("topic") or ""),
-                                payload=value.get("payload"),
-                                session_time_seconds=timeline_seconds,
-                                sequence=int(value.get("sequence", len(events) + 1)),
-                                schema_version=int(value.get("message_schema_version", 1)),
-                                source=str(value.get("source") or REPLAY_SOURCE),
-                                original_timestamp=(
-                                    str(value["source_timestamp_utc"])
-                                    if value.get("source_timestamp_utc")
-                                    else None
-                                ),
-                                original_received_at=(
-                                    str(value["received_at_utc"])
-                                    if value.get("received_at_utc")
-                                    else None
-                                ),
-                                message_session_time_seconds=(
-                                    session_time_seconds(recorded_session_time)
-                                    if recorded_session_time is not None
-                                    else None
-                                ),
-                                preserve_message_session_time=True,
-                            )
+                        event = ReplayEvent(
+                            topic=str(value.get("topic") or ""),
+                            payload=value.get("payload"),
+                            session_time_seconds=timeline_seconds,
+                            sequence=int(value.get("sequence", len(events) + 1)),
+                            schema_version=int(value.get("message_schema_version", 1)),
+                            source=str(value.get("source") or REPLAY_SOURCE),
+                            original_timestamp=(
+                                str(value["source_timestamp_utc"])
+                                if value.get("source_timestamp_utc")
+                                else None
+                            ),
+                            original_received_at=(
+                                str(value["received_at_utc"])
+                                if value.get("received_at_utc")
+                                else None
+                            ),
+                            message_session_time_seconds=(
+                                session_time_seconds(recorded_session_time)
+                                if recorded_session_time is not None
+                                else None
+                            ),
+                            preserve_message_session_time=True,
+                            received_at_is_trusted=value.get("received_at_is_trusted"),
+                            parsed_received_at=received_at,
+                            _receipt_parsed=True,
                         )
                     else:
-                        events.append(ReplayEvent.from_dict(value))
+                        event = ReplayEvent.from_dict(value)
                 else:
                     topic, payload, timestamp = parse_recorded_line(line.strip())
                     seconds = timestamp.timestamp() if timestamp is not None else float(len(events))
-                    events.append(
-                        ReplayEvent(
-                            topic,
-                            payload,
-                            seconds,
-                            len(events) + 1,
-                            original_timestamp=(timestamp.isoformat() if timestamp else None),
-                        )
+                    event = ReplayEvent(
+                        topic,
+                        payload,
+                        seconds,
+                        len(events) + 1,
+                        original_timestamp=(timestamp.isoformat() if timestamp else None),
+                        message_session_time_seconds=seconds if timestamp is not None else None,
+                        preserve_message_session_time=True,
                     )
+                flag = event.received_at_is_trusted
+                if flag is not None and not isinstance(flag, bool):
+                    if not permissive:
+                        raise ValueError("received_at_is_trusted must be a boolean or null")
+                    flag = False
+                # Public ReplayEvent.to_dict() live recordings predate the
+                # explicit trust flag. Their original source and original
+                # receipt carry the same claim as the schema-2 envelope.
+                # Playback/source timestamps alone never supply that receipt.
+                claims_genuine_receipt = flag is True or (
+                    flag is None and event.source == "signalr_live"
+                )
+                if claims_genuine_receipt and event.parsed_received_at is None and not permissive:
+                    raise ValueError("genuine receipt metadata requires a valid original receipt timestamp")
+                events.append(replace(
+                    event,
+                    received_at_is_trusted=(claims_genuine_receipt and event.parsed_received_at is not None),
+                ))
             except (SyntaxError, ValueError, TypeError, json.JSONDecodeError) as exc:
                 if not permissive:
                     raise ValueError(
@@ -211,16 +241,17 @@ class ReplayPlayer:
                 payload=event.payload,
                 source_timestamp_utc=parse_timestamp(event.original_timestamp),
                 received_at_utc=(
-                    parse_timestamp(event.original_received_at)
-                    or datetime.now(timezone.utc)
+                    event.parsed_received_at
+                    or parse_timestamp(event.original_timestamp)
+                    or datetime(1970, 1, 1, tzinfo=timezone.utc)
                 ),
                 schema_version=event.schema_version,
                 source=REPLAY_SOURCE,
                 sequence=event.sequence,
-                session_time_seconds=(
-                    event.message_session_time_seconds
-                    if event.preserve_message_session_time
-                    else event.session_time_seconds
+                session_time_seconds=event.message_session_time_seconds,
+                playback_time_seconds=event.session_time_seconds,
+                received_at_is_trusted=(
+                    event.received_at_is_trusted is True and event.parsed_received_at is not None
                 ),
             )
             try:

@@ -45,6 +45,8 @@ class FastF1LiveTimingSource:
 
         def on_message(record) -> None:
             nonlocal received, sequence
+            receipt_monotonic = time.monotonic()
+            receipt_utc = datetime.now(timezone.utc)
             topic, payload, source_timestamp = record
             sequence += 1
             emit_message(
@@ -52,9 +54,10 @@ class FastF1LiveTimingSource:
                     str(topic),
                     payload,
                     parse_timestamp(source_timestamp),
-                    datetime.now(timezone.utc),
+                    receipt_utc,
                     source="signalr_live",
                     sequence=sequence,
+                    received_at_monotonic_s=receipt_monotonic,
                 )
             )
             if not received:
@@ -83,6 +86,9 @@ class FastF1LiveTimingSource:
                 inner_self._t_last_message = time.time()
                 result = getattr(message, "result", None)
                 if isinstance(result, dict):
+                    # Subscribe returns topic snapshots, not timestamped feed
+                    # occurrences. Iteration/sequence records delivery order
+                    # only; neither it nor local arrival dates these values.
                     for topic, payload in result.items():
                         on_message((topic, payload, None))
                     return

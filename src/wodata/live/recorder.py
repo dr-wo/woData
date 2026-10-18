@@ -59,6 +59,8 @@ class LiveTimingRecorder:
                             "source": message.source,
                             "sequence": message.sequence,
                             "session_time_seconds": message.session_time_seconds,
+                            "playback_time_seconds": message.playback_time_seconds,
+                            "received_at_is_trusted": message.received_at_is_trusted,
                         },
                         separators=(",", ":"),
                         ensure_ascii=False,

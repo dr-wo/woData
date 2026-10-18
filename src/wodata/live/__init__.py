@@ -10,6 +10,7 @@ from .models import (
     LiveMessage,
     LiveSessionSnapshot,
     LiveTimingMessage,
+    PublicationTime,
     LiveTelemetrySample,
     LivePositionSample,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "merge_recordings",
     "LiveTimingController",
     "LiveTimingMessage",
+    "PublicationTime",
     "LiveTelemetrySample",
     "LivePositionSample",
     "LiveTimingSource",

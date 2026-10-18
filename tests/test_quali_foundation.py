@@ -79,7 +79,7 @@ def test_segment_scoping_history_zero_and_13_minute_q3():
     store.apply(message("SessionInfo", IDENTITY))
     store.apply(clock("00:00:00"))  # Pre-session zero is not chequered.
     assert not store.snapshot().normal_finished
-    assert store.apply(clock("18:00", running=True)).session_part == "Q1"
+    assert store.apply(clock("18:00", 1, running=True)).session_part == "Q1"
     store.apply(lap(3, "1:22.758", 100))
     zero = store.apply(clock("00:00:00", 1080))
     assert zero.remaining_time_s == 0 and zero.normal_finished
@@ -115,8 +115,8 @@ def test_replay_bootstrap_zero_cannot_latch_finish_before_positive_countdown():
     bootstrap = store.apply(clock("00:00:00"))
     assert not bootstrap.normal_finished
 
-    store.apply(clock("18:00", running=True))
-    genuine_end = store.apply(clock("00:00:00"))
+    store.apply(clock("18:00", 1, running=True))
+    genuine_end = store.apply(clock("00:00:00", 1081))
     assert genuine_end.normal_finished
     assert genuine_end.normal_finish_source == "clock_zero"
 

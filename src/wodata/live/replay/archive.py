@@ -65,6 +65,7 @@ class FastF1ArchiveClient:
         response = _api.fetch_page(api_path, page_name)
         if response is None:
             return []
+        publication_time_known = isinstance(response, list)
         if not isinstance(response, list):
             response = [[0.0, response]]
         records = []
@@ -87,7 +88,8 @@ class FastF1ArchiveClient:
                     session_time_seconds=session_time_seconds(timestamp),
                     payload=payload,
                     source_order=index,
-                    original_timestamp=str(timestamp),
+                    original_timestamp=str(timestamp) if publication_time_known else None,
+                    publication_time_known=publication_time_known,
                 )
             )
         return records
