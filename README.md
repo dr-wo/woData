@@ -1,5 +1,7 @@
 # woData
 
+[dr-wo project home](https://github.com/dr-wo/dr-wo) · [Application](https://github.com/dr-wo/woPlanner) · [Analysis](https://github.com/dr-wo/woStrategy) · [Workflows](https://github.com/dr-wo/woWeekend)
+
 `woData` is the reproducible data layer for the dr-wo Formula 1 strategy
 ecosystem. It resolves event identity, ingests live timing, records canonical raw
 messages before reduction, reconstructs timing/tyre/telemetry state, builds
@@ -8,6 +10,17 @@ used by `woPlanner`, `woStrategy` and `woWeekend`.
 
 All inputs are public F1 data. Missing timing or metadata remains unknown rather
 than being replaced with a convenient estimate.
+
+## Installation and consumers
+
+Use Python 3.10+ in an active environment. From this checkout, install the core
+package with `python -m pip install -e .`; use `python -m pip install -e ".[live]"`
+for timing ingestion and replay dependencies. Vision-assisted preview extraction
+is an optional extra, documented below.
+
+woPlanner consumes live/replay state; woStrategy consumes analysis data and
+contracts; woWeekend persists workflow runs. [woStanding](https://github.com/dr-wo/woStanding)
+uses shared data paths and plotting colours for championship progression.
 
 ## Data flow
 
@@ -483,9 +496,9 @@ instead of defining local palettes.
 
 ## Development context
 
-Cross-repository pace/tyre artifacts follow
-[`CANONICAL_PACE_CONTRACT.md`](CANONICAL_PACE_CONTRACT.md). Producers should
-write its artifact-level semantics and consumers should preserve them without
+Cross-repository pace/tyre artifacts use the shared
+[analysis contracts](#strategy-prediction-analysis-contracts). Producers should
+write explicit artifact semantics and consumers should preserve them without
 inventing missing legacy provenance.
 
 This project is developed extensively with coding agents. Durable context in the
